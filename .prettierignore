@@ -1,0 +1,13 @@
+# 构建产物
+dist
+node_modules
+
+# 锁文件（格式化无意义且易产生 diff）
+pnpm-lock.yaml
+package-lock.json
+
+# Prisma 迁移文件（由 Prisma CLI 自动生成，不应手动格式化）
+prisma/migrations
+
+# 文档
+*.md

@@ -1,0 +1,12 @@
+# pnpm 11+ 配置文件
+# 说明：pnpm 11 移除了 onlyBuiltDependencies，改用 allowBuilds 映射。
+#       此处显式允许以下依赖在安装时执行构建脚本（postinstall 等）。
+#       - @prisma/client / prisma / @prisma/engines：需要运行 prisma generate 生成客户端
+#       - bcrypt：原生模块，需要编译
+#       - @scarf/scarf：Prisma 遥测依赖（允许以消除 ERR_PNPM_IGNORED_BUILDS）
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true
+  bcrypt: true
+  '@scarf/scarf': true

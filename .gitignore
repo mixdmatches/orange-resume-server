@@ -1,0 +1,35 @@
+# ================== Node ==================
+node_modules/
+dist/
+build/
+.cache/
+
+# ================== 日志 ==================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ================== 编辑器 / 系统 ==================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ================== 环境变量 ==================
+.env
+.env.local
+.env.*.local
+
+# ================== 覆盖率报告 ==================
+coverage/
+*.lcov
+
+# ================== Prisma 生成文件 ==================
+# prisma/client 默认生成到 node_modules 中，这里无需重复忽略
+prisma/migrations/**/migration_lock.toml.bak
+
+# ================== 其他 ==================
+.trae
+*.tsbuildinfo

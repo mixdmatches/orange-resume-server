@@ -1,0 +1,65 @@
+// 生成 Prisma Client（默认 JS 实现）
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 数据源：MySQL 8.0+，连接串从 .env 的 DATABASE_URL 读取
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * 用户表
+ * 存储注册用户的基本信息，密码使用 bcrypt 哈希后保存
+ */
+model User {
+  /// 主键，自增 ID
+  id           Int       @id @default(autoincrement())
+  /// 用户名（唯一，4-20 位字母数字下划线）
+  username     String    @unique
+  /// 邮箱（唯一）
+  email        String    @unique
+  /// bcrypt 加密后的密码哈希
+  passwordHash String
+  /// 昵称，可空
+  nickname     String?
+  /// 头像 URL，可空
+  avatar       String?
+  /// 记录创建时间
+  createdAt    DateTime  @default(now())
+  /// 记录更新时间
+  updatedAt    DateTime  @updatedAt
+
+  /// 一个用户拥有多份简历，删除用户时级联删除所有简历
+  resumes      Resume[]
+}
+
+/**
+ * 简历表
+ * 存储简历元信息 + 完整内容（内容为 JSON 字段，结构对应前端 Resume 类型）
+ */
+model Resume {
+  /// 简历短 ID，5 位字符串（与前端保持一致的生成规则）
+  id          String    @id @db.VarChar(10)
+  /// 所属用户 ID（外键）
+  userId      Int
+  /// 使用的模板 ID
+  templateId  String
+  /// 简历标题
+  title       String
+  /// 完整简历内容（JSON 格式，对应前端 Resume 接口的完整对象）
+  content     Json
+  /// 创建时间
+  createdAt   DateTime  @default(now())
+  /// 更新时间
+  updatedAt   DateTime  @updatedAt
+
+  /// 与 User 表的关联关系：N : 1，级联删除
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 索引：按 userId 加速查询用户的全部简历
+  @@index([userId])
+  /// 索引：按更新时间倒序加速列表分页排序
+  @@index([updatedAt])
+}
