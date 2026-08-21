@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import * as crypto from 'node:crypto'
 import { PrismaService } from '../../prisma/prisma.service'
-import type { UpdateResumeDto, DeleteBatchResumeDto, CreateResumeDto } from './dto/resume.dto'
+import type { UpdateResumeDto, CreateResumeDto } from './dto/resume.dto'
 
 /**
  * 简历列表单条摘要结构（不含 content，省流量）
@@ -16,7 +16,7 @@ export interface ResumeSummary {
   /** 创建时间（毫秒时间戳，与前端 Resume 类型一致） */
   createdAt: number
   /** 更新时间（毫秒时间戳） */
-  updatedAt: number
+  updatedAt: number | null
 }
 
 /**
@@ -51,8 +51,8 @@ export class ResumeService {
    * DateTime → 毫秒时间戳（JS number）
    * @param dt Prisma 返回的 Date 对象
    */
-  private toTimestamp(dt: Date): number {
-    return dt.getTime()
+  private toTimestamp(dt?: Date): number | null {
+    return dt?.getTime() ?? null
   }
 
   /**
@@ -190,7 +190,7 @@ export class ResumeService {
         title: dto.title ?? undefined,
         templateId: dto.templateId ?? undefined,
         content: dto.content as any,
-        // updatedAt 由 Prisma 的 @updatedAt 自动刷新
+        updatedAt: new Date(),
       },
       select: { id: true, updatedAt: true },
     })

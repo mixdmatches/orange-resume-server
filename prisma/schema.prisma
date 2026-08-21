@@ -53,7 +53,7 @@ model Resume {
   /// 创建时间
   createdAt   DateTime  @default(now())
   /// 更新时间
-  updatedAt   DateTime  @updatedAt
+  updatedAt   DateTime?
 
   /// 与 User 表的关联关系：N : 1，级联删除
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)

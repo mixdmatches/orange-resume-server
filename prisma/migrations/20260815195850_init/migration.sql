@@ -22,7 +22,7 @@ CREATE TABLE `Resume` (
     `title` VARCHAR(191) NOT NULL,
     `content` JSON NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `updatedAt` DATETIME(3) NOT NULL,
+    `updatedAt` DATETIME(3) DEFAULT NULL,
 
     INDEX `Resume_userId_idx`(`userId`),
     INDEX `Resume_updatedAt_idx`(`updatedAt`),
