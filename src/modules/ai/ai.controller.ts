@@ -1,4 +1,14 @@
-import { Body, Controller, Header, Headers, Post, Sse, UseGuards } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  Header,
+  Headers,
+  HttpException,
+  Post,
+  Res,
+  Sse,
+  UseGuards,
+} from '@nestjs/common'
 import {
   ApiBearerAuth,
   ApiBody,
@@ -7,6 +17,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger'
+import type { Response } from 'express'
 import { Observable } from 'rxjs'
 import { AiService } from './ai.service'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
@@ -91,7 +102,7 @@ export class AiController {
   @ApiOperation({
     summary: '简历语法检查',
     description:
-      "输入简历纯文本（前端将各 section 拼好后传入），返回发现的语法/措辞问题数组 issues：每项含 { id, severity('error'|'warning'|'info'), category, original, corrected, explanation, location? }。",
+      "输入简历纯文本（前端将各 section 拼好后传入），返回 { issues: [...] }：每项含 { section, original, suggestion, reason, severity('error'|'warning') }。",
   })
   @ApiBody({ type: GrammarCheckDto })
   @Post('grammar-check')
@@ -208,20 +219,39 @@ export class AiController {
     type: ChatStreamDto,
     description: '对话上下文 messages 数组（按 system/user/assistant 排序）',
   })
-  @Sse('chat/stream')
+  @Post('chat/stream')
   @Header('Content-Type', 'text/event-stream')
   @Header('Cache-Control', 'no-cache')
   @Header('Connection', 'keep-alive')
   chatStream(
     @Headers() headers: Record<string, string>,
     @Body() dto: ChatStreamDto,
-  ): Observable<{ data: string }> {
-    return this.aiService.chatStream(
-      dto,
-      headers[HEADER_API_KEY],
-      headers[HEADER_BASE_URL],
-      headers[HEADER_MODEL_ID],
-    )
+    @Res() res: Response,
+  ): void {
+    // 手动设置 SSE 响应头（@Post 不像 @Sse 会自动处理）
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no') // 防 Nginx 反代缓冲
+    res.flushHeaders()
+
+    const subscription = this.aiService
+      .chatStream(dto, headers[HEADER_API_KEY], headers[HEADER_BASE_URL], headers[HEADER_MODEL_ID])
+      .subscribe({
+        // 把 Observable 的每次发射写成标准 SSE 帧：data: xxx\n\n
+        next: (msg) => res.write(`data: ${msg.data}\n\n`),
+        error: (err) => {
+          const msg = err instanceof HttpException ? err.message : '生成失败，请重试'
+          res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
+          res.end()
+        },
+        complete: () => res.end(),
+      })
+
+    // 客户端断开（关页面/取消生成）时退订上游，避免资源泄漏
+    res.on('close', () => {
+      subscription.unsubscribe()
+    })
   }
 
   /**
@@ -235,19 +265,40 @@ export class AiController {
       '根据目标岗位 + 简历内容，流式生成一段 1-3 分钟的自我介绍话术。⚠️ Swagger UI 不适合预览 SSE 效果，请用 curl -N 或前端页面测试。',
   })
   @ApiBody({ type: SelfIntroDto })
-  @Sse('self-intro/stream')
-  @Header('Content-Type', 'text/event-stream')
-  @Header('Cache-Control', 'no-cache')
-  @Header('Connection', 'keep-alive')
+  @Post('self-intro/stream')
   selfIntroStream(
     @Headers() headers: Record<string, string>,
     @Body() dto: SelfIntroDto,
-  ): Observable<{ data: string }> {
-    return this.aiService.selfIntroStream(
-      dto,
-      headers[HEADER_API_KEY],
-      headers[HEADER_BASE_URL],
-      headers[HEADER_MODEL_ID],
-    )
+    @Res() res: Response,
+  ): void {
+    // 手动设置 SSE 响应头（@Post 不像 @Sse 会自动处理）
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no') // 防 Nginx 反代缓冲
+    res.flushHeaders()
+
+    const subscription = this.aiService
+      .selfIntroStream(
+        dto,
+        headers[HEADER_API_KEY],
+        headers[HEADER_BASE_URL],
+        headers[HEADER_MODEL_ID],
+      )
+      .subscribe({
+        // 把 Observable 的每次发射写成标准 SSE 帧：data: xxx\n\n
+        next: (msg) => res.write(`data: ${msg.data}\n\n`),
+        error: (err) => {
+          const msg = err instanceof HttpException ? err.message : '生成失败，请重试'
+          res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
+          res.end()
+        },
+        complete: () => res.end(),
+      })
+
+    // 客户端断开（关页面/取消生成）时退订上游，避免资源泄漏
+    res.on('close', () => {
+      subscription.unsubscribe()
+    })
   }
 }

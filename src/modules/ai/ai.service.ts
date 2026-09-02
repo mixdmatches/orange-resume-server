@@ -30,6 +30,10 @@ export interface GrammarIssue {
   severity: GrammarSeverity
 }
 
+export interface GrammarCheckResult {
+  issues: GrammarIssue[]
+}
+
 export interface ResumeScoreDimension {
   name: string
   score: number
@@ -199,14 +203,14 @@ export class AiService {
    * @param apiKey 用户 Key
    * @param baseUrl 用户端点
    * @param modelId 用户模型
-   * @returns GrammarIssue[]
+   * @returns 包含语法问题列表的对象
    */
   async checkGrammar(
     dto: GrammarCheckDto,
     apiKey: string | undefined,
     baseUrl: string | undefined,
     modelId: string | undefined,
-  ): Promise<GrammarIssue[]> {
+  ): Promise<GrammarCheckResult> {
     this.validateHeaders(apiKey, baseUrl, modelId)
     const openai = this.createOpenAIClient(apiKey!, baseUrl!)
 
@@ -244,8 +248,9 @@ export class AiService {
         stream: false,
       })
       const raw = completion.choices[0]?.message?.content || '{"issues":[]}'
-      const parsed = JSON.parse(raw)
-      return parsed.issues || []
+      const parsed = JSON.parse(raw) as { issues?: unknown }
+      const issues = Array.isArray(parsed.issues) ? (parsed.issues as GrammarIssue[]) : []
+      return { issues }
     } catch (error) {
       console.error('[AI] 语法检查失败（key=%s）', this.maskKey(apiKey!))
       throw new BadRequestException(this.formatError(error))
