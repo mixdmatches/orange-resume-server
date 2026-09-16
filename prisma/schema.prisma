@@ -26,6 +26,9 @@ model User {
   nickname     String?
   /// 头像 URL，可空
   avatar       String?
+  /// 用户偏好设置（JSON）：{ theme: 'dark'|'light'|'system', defaultTemplate, autoSync, ... }
+  /// 跨设备同步的用户级偏好，不包含敏感信息
+  preferences  Json?
   /// 记录创建时间
   createdAt    DateTime  @default(now())
   /// 记录更新时间
@@ -33,6 +36,8 @@ model User {
 
   /// 一个用户拥有多份简历，删除用户时级联删除所有简历
   resumes      Resume[]
+  /// 一对一关联：用户的 AI 配置（含加密后的 API Key）
+  aiConfig     UserAiConfig?
 }
 
 /**
@@ -62,4 +67,23 @@ model Resume {
   @@index([userId])
   /// 索引：按更新时间倒序加速列表分页排序
   @@index([updatedAt])
+}
+
+/// 用户 AI 配置表（一对一，userId 唯一）
+model UserAiConfig {
+  /// 主键 = userId
+  userId          Int      @id
+  /// 当前选中的服务商 ID（如 'deepseek'）
+  selectedModel   String   @db.VarChar(32)
+  /// 自定义润色提示词
+  polishPrompt    String?  @db.Text
+  /// 全部服务商配置（含 API Key，加密后存储）
+  /// 加密后结构：{ states: [{ id, name, apiKeyEnc, modelId, apiEndpoint, ... }] }
+  providers       Json
+  /// 乐观锁：多端修改冲突比较用
+  version         Int      @default(1)
+  updatedAt       DateTime @updatedAt
+
+  /// 与 User 表的关联关系：1 : 1，级联删除
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
