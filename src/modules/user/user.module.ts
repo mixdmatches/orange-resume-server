@@ -6,12 +6,12 @@ import { UserController } from './user.controller'
 /**
  * 用户模块
  * - 对外暴露 UserService 供 AuthModule 等模块注入
+ * - 对外暴露 UserAiConfigService 供 AiModule 读取用户 AI 凭证（AI 代理转发请求用）
  * - 注册 UserController，提供 /user/ai-config、/user/preferences 等路由
- * - UserAiConfigService 处理 AI 配置的加密存取，仅在模块内使用
  */
 @Module({
   providers: [UserService, UserAiConfigService],
   controllers: [UserController],
-  exports: [UserService],
+  exports: [UserService, UserAiConfigService],
 })
 export class UserModule {}

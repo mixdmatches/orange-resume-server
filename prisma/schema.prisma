@@ -26,18 +26,19 @@ model User {
   nickname     String?
   /// 头像 URL，可空
   avatar       String?
-  /// 用户偏好设置（JSON）：{ theme: 'dark'|'light'|'system', defaultTemplate, autoSync, ... }
-  /// 跨设备同步的用户级偏好，不包含敏感信息
-  preferences  Json?
+  /// 用户主题（默认 light，可选：light/dark/system）
+  theme        String   @default("light") @db.VarChar(10)
   /// 记录创建时间
   createdAt    DateTime  @default(now())
   /// 记录更新时间
   updatedAt    DateTime  @updatedAt
 
   /// 一个用户拥有多份简历，删除用户时级联删除所有简历
-  resumes      Resume[]
-  /// 一对一关联：用户的 AI 配置（含加密后的 API Key）
-  aiConfig     UserAiConfig?
+  resumes       Resume[]
+  /// 一对多关联：用户配置的多个 AI 厂商
+  aiProviders   AiProvider[]
+  /// 一对一关联：用户的 AI 偏好（当前选中厂商 + 润色提示词）
+  aiPreference  AiPreference?
 }
 
 /**
@@ -69,21 +70,52 @@ model Resume {
   @@index([updatedAt])
 }
 
-/// 用户 AI 配置表（一对一，userId 唯一）
-model UserAiConfig {
-  /// 主键 = userId
-  userId          Int      @id
-  /// 当前选中的服务商 ID（如 'deepseek'）
-  selectedModel   String   @db.VarChar(32)
+/// AI 厂商配置表（每个用户可配置多个厂商，与 User 一对多）
+model AiProvider {
+  /// 主键，自增 ID
+  id           Int      @id @default(autoincrement())
+  /// 所属用户 ID（外键）
+  userId       Int      @map("user_id")
+  /// 厂商标识：deepseek / doubao / openai / custom-xxx
+  providerId   String   @db.VarChar(64) @map("provider_id")
+  /// 自定义供应商名称（内置厂商为空，用于路由 AI 请求）
+  providerName String?  @db.VarChar(64) @map("provider_name")
+  /// 加密后的 API Key（对称加密后的二进制，加密方案见设计文档第三节）
+  apiKeyCipher Bytes?   @db.VarBinary(512) @map("api_key_cipher")
+  /// API Key 尾号 4 位，用于脱敏展示
+  apiKeyLast4  String?  @db.Char(4) @map("api_key_last4")
+  /// 该厂商下默认使用的模型 ID
+  modelId      String?  @db.VarChar(128) @map("model_id")
+  /// API 接口地址（自定义厂商或代理地址）
+  apiEndpoint  String?  @db.VarChar(255) @map("api_endpoint")
+  /// 创建时间
+  createdAt    DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  /// 与 User 表的关联关系：N : 1，级联删除
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 唯一约束：同一用户下厂商标识唯一（对应设计文档的 uk_user_provider）
+  @@unique([userId, providerId], map: "uk_user_provider")
+  /// 数据库表名映射为设计文档中的 snake_case 命名
+  @@map("ai_provider")
+}
+
+/// 用户级偏好表（与 User 一对一：当前选中厂商 + 润色提示词）
+model AiPreference {
+  /// 用户 ID（主键即外键，一对一）
+  userId             Int      @id @map("user_id")
+  /// 当前选中的厂商 ID（对应 ai_provider.providerId）
+  selectedProviderId String?  @db.VarChar(64) @map("selected_provider_id")
   /// 自定义润色提示词
-  polishPrompt    String?  @db.Text
-  /// 全部服务商配置（含 API Key，加密后存储）
-  /// 加密后结构：{ states: [{ id, name, apiKeyEnc, modelId, apiEndpoint, ... }] }
-  providers       Json
-  /// 乐观锁：多端修改冲突比较用
-  version         Int      @default(1)
-  updatedAt       DateTime @updatedAt
+  polishPrompt       String?  @db.Text @map("polish_prompt")
+  /// 更新时间
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   /// 与 User 表的关联关系：1 : 1，级联删除
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 数据库表名映射为设计文档中的 snake_case 命名
+  @@map("ai_preference")
 }

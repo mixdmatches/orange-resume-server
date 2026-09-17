@@ -1,4 +1,4 @@
-import { IsEnum, IsIn, IsInt, IsNotEmpty, IsObject, IsString, Max, Min } from 'class-validator'
+import { IsEnum, IsIn, IsNotEmpty, IsObject, IsString } from 'class-validator'
 
 /** 自我介绍生成场景 */
 export type SelfIntroScene = '校招' | '社招' | '实习'

@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard'
 import { CurrentUser } from '@/common/decorators/current-user.decorator'
 import type { JwtPayload } from '@/common/types/jwt-payload'
-import { UserService } from './user.service'
 import { UserAiConfigService } from './user-ai-config.service'
+import { createAiConfigDto } from './dto/ai-config.dto'
 
 /**
  * 用户控制器
@@ -16,10 +16,16 @@ import { UserAiConfigService } from './user-ai-config.service'
 @UseGuards(JwtAuthGuard)
 @Controller('user')
 export class UserController {
-  constructor(
-    private readonly userService: UserService,
-    private readonly userAiConfigService: UserAiConfigService,
-  ) {}
+  constructor(private readonly userAiConfigService: UserAiConfigService) {}
+
+  /**
+   * 新增用户 AI 配置
+   */
+  @Post('ai-config')
+  @ApiOperation({ summary: '新增用户 AI 配置（选中模型、润色提示词、服务商列表等）' })
+  async addAiConfig(@CurrentUser() user: JwtPayload, @Body() config: createAiConfigDto) {
+    return this.userAiConfigService.addOrUpdateAiConfig(user.userId, config)
+  }
 
   /**
    * 获取当前用户的 AI 配置
@@ -35,32 +41,44 @@ export class UserController {
   }
 
   /**
-   * 获取当前用户的偏好设置
-   * preferences 为 JSON 字段，未设置过时返回 null
-   *
+   * 删除用户 AI 配置
    * @param user JWT 解析出的当前用户信息
-   * @returns 偏好设置对象（如 { theme, defaultTemplate, autoSync }）
+   * @param id 服务商 ID
+   * @returns 删除结果
    */
-  @Get('preferences')
-  @ApiOperation({ summary: '获取用户偏好设置' })
-  async getPreferences(@CurrentUser() user: JwtPayload) {
-    return this.userService.getPreferences(user.userId)
+  @Delete('ai-config/:id')
+  @ApiOperation({ summary: '删除用户 AI 配置（选中模型、润色提示词、服务商列表等）' })
+  async deleteAiConfig(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.userAiConfigService.deleteAiConfig(user.userId, id)
   }
 
   /**
-   * 更新当前用户的偏好设置（整体替换）
-   * 前端需提交完整的偏好对象，后端不做字段级合并
-   *
+   * 获取用户选中模型和润色提示词
    * @param user JWT 解析出的当前用户信息
-   * @param preferences 完整的偏好设置对象
-   * @returns 更新后的偏好设置对象
+   * @returns 用户选中模型和润色提示词
    */
-  @Put('preferences')
-  @ApiOperation({ summary: '更新用户偏好设置（整体替换）' })
-  async updatePreferences(
+  @Get('ai-config/sel-model-and-prompt')
+  @ApiOperation({ summary: '获取用户选中模型和润色提示词' })
+  async getSelModelAndPrompt(@CurrentUser() user: JwtPayload) {
+    return this.userAiConfigService.getSelModelAndPrompt(user.userId)
+  }
+
+  /**
+   * 更新用户选中模型和润色提示词
+   * @param user JWT 解析出的当前用户信息
+   * @param config 更新参数（选中模型ID、润色提示词）
+   * @returns 更新结果
+   */
+  @Put('ai-config/sel-model-and-prompt')
+  @ApiOperation({ summary: '更新用户选中模型和润色提示词' })
+  async updateSelModelAndPrompt(
     @CurrentUser() user: JwtPayload,
-    @Body() preferences: Record<string, unknown>,
+    @Body() config: { selectedProviderId: string; polishPrompt: string },
   ) {
-    return this.userService.updatePreferences(user.userId, preferences)
+    return this.userAiConfigService.updateSelModelAndPrompt(
+      user.userId,
+      config.selectedProviderId,
+      config.polishPrompt,
+    )
   }
 }

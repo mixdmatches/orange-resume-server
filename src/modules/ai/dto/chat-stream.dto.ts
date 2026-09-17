@@ -2,11 +2,8 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsEnum,
-  IsInt,
   IsNotEmpty,
   IsString,
-  Max,
-  Min,
   ValidateNested,
 } from 'class-validator'
 import { Type } from 'class-transformer'

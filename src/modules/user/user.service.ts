@@ -1,6 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import * as bcrypt from 'bcrypt'
-import { Prisma } from '@prisma/client'
 import { PrismaService } from '../../prisma/prisma.service'
 
 /**
@@ -142,51 +141,5 @@ export class UserService {
       throw new NotFoundException('用户不存在')
     }
     return user
-  }
-
-  /**
-   * 查询用户偏好设置（User.preferences JSON 字段）
-   *
-   * @param userId 用户 ID
-   * @returns 偏好设置对象，从未设置过时返回 null
-   * @throws NotFoundException 当用户不存在时
-   */
-  async getPreferences(userId: number): Promise<Record<string, unknown> | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { preferences: true },
-    })
-    if (!user) {
-      throw new NotFoundException('用户不存在')
-    }
-    return (user.preferences as Record<string, unknown> | null) ?? null
-  }
-
-  /**
-   * 更新用户偏好设置（整体替换，前端提交完整对象后直接覆盖存储）
-   * Prisma 更新目标不存在时抛 P2025，这里转换为统一的 404 业务异常
-   *
-   * @param userId 用户 ID
-   * @param preferences 完整的偏好设置对象
-   * @returns 更新后的偏好设置对象
-   * @throws NotFoundException 当用户不存在时
-   */
-  async updatePreferences(
-    userId: number,
-    preferences: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    try {
-      const user = await this.prisma.user.update({
-        where: { id: userId },
-        data: { preferences: preferences as Prisma.InputJsonValue },
-        select: { preferences: true },
-      })
-      return user.preferences as Record<string, unknown>
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new NotFoundException('用户不存在')
-      }
-      throw error
-    }
   }
 }
