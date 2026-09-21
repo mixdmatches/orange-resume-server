@@ -40,6 +40,12 @@ export class UserAiConfigService {
    * @returns 服务商唯一标识 providerId
    */
   async addOrUpdateAiConfig(userId: number, config: createAiConfigDto): Promise<string> {
+    if (!config.apiKeyEnc) {
+      throw new BadRequestException('API Key 不能为空')
+    }
+    if (config.apiKeyEnc.includes('****')) {
+      throw new BadRequestException('API Key 不能包含 ****')
+    }
     if (!config.providerId) {
       config.providerId = this.generateShortId()
     }
