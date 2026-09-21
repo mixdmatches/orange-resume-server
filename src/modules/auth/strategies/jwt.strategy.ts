@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, UnauthorizedException } from '@nestjs/common'
 import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 import { ConfigService } from '@nestjs/config'
-import type { JwtPayload } from '../../../common/types/jwt-payload'
+import type { JwtPayload, JwtTokenType } from '../../../common/types/jwt-payload'
 
 /**
  * Passport JWT 策略
@@ -29,11 +29,21 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   /**
    * Passport 校验成功回调
-   * 将 Token 解码后的原始 payload 转换为我们的 JwtPayload 类型
-   * @param payload JWT 解码后的对象 { userId, username, iat, exp }
-   * @returns 剔除 iat/exp 后的 { userId, username }
+   * 签名与有效期已由 passport-jwt 自动完成，这里补充业务层校验：
+   * 1. 拒绝 refresh 类型令牌 —— refreshToken 长寿命，一旦允许访问业务接口，
+   *    泄露后的危害等同于长期 accessToken，违背双 Token 的设计初衷
+   * 2. 将解码后的 payload 精简为 JwtPayload 返回，挂载到 request.user
+   * @param payload JWT 解码后的对象 { userId, username, type?, iat, exp }
+   * @returns { userId, username }
+   * @throws UnauthorizedException 当令牌为 refresh 类型时（code=40101）
    */
-  async validate(payload: JwtPayload & { iat?: number; exp?: number }): Promise<JwtPayload> {
+  async validate(
+    payload: JwtPayload & { type?: JwtTokenType; iat?: number; exp?: number },
+  ): Promise<JwtPayload> {
+    // 纵深防御：refreshToken 只能调 /auth/refresh，不允许访问任何业务接口
+    if (payload.type === 'refresh') {
+      throw new UnauthorizedException('无效的令牌类型')
+    }
     return {
       userId: payload.userId,
       username: payload.username,

@@ -5,6 +5,7 @@ import { AuthModule } from './modules/auth/auth.module'
 import { UserModule } from './modules/user/user.module'
 import { ResumeModule } from './modules/resume/resume.module'
 import { AiModule } from './modules/ai/ai.module'
+import { AiSessionModule } from './modules/ai-session/ai-session.module'
 
 /**
  * 应用根模块
@@ -24,6 +25,7 @@ import { AiModule } from './modules/ai/ai.module'
     AuthModule,
     ResumeModule,
     AiModule,
+    AiSessionModule,
   ],
 })
 export class AppModule {}

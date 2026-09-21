@@ -25,7 +25,8 @@ export class TransformInterceptor<T> implements NestInterceptor<T, any> {
     const url: string = request?.url ?? ''
 
     // 流式接口跳过拦截：SSE 事件本身是 text/event-stream，不能包 JSON
-    const isSseStream = url.includes('/ai/chat/stream') || url.includes('/ai/self-intro/stream')
+    // 统一按 URL 含 /stream 判断（覆盖 /ai/chat/stream、/ai/self-intro/stream、/ai-sessions/:id/chat/stream 等）
+    const isSseStream = url.includes('/stream')
 
     if (isSseStream) {
       return next.handle()

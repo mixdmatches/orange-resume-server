@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nes
 import { AuthService } from './auth.service'
 import { RegisterDto } from './dto/register.dto'
 import { LoginDto } from './dto/login.dto'
+import { RefreshTokenDto } from './dto/refresh.dto'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
 import { CurrentUser } from '../../common/decorators/current-user.decorator'
 import type { JwtPayload } from '../../common/types/jwt-payload'
@@ -54,15 +55,15 @@ export class AuthController {
    * @returns { token, userInfo } JWT 与用户公开资料
    */
   @ApiOperation({
-    summary: '用户登录（获取 JWT Token）',
+    summary: '用户登录（获取双 Token）',
     description:
-      'username 字段支持「用户名」或「邮箱」两种形式，后端自动识别。登录成功返回 JWT Token，需要将 Token 放入后续请求的 Authorization: Bearer <token> 头中。',
+      'username 字段支持「用户名」或「邮箱」两种形式，后端自动识别。登录成功返回 accessToken（默认 2h，业务请求放 Authorization: Bearer <accessToken>）与 refreshToken（默认 7d，仅用于 /auth/refresh 静默续期）。',
   })
   @ApiBody({ type: LoginDto })
   @ApiResponse({
     status: 200,
     description:
-      '登录成功，code=0。data = { token: "eyJ...", userInfo: {id,username,nickname,avatar} }。Token 默认 7 天有效。',
+      '登录成功，code=0。data = { accessToken: "eyJ...", refreshToken: "eyJ...", userInfo: {id,username,nickname,avatar} }',
   })
   @ApiResponse({
     status: 200,
@@ -72,6 +73,33 @@ export class AuthController {
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto)
+  }
+
+  /**
+   * 刷新令牌接口（双 Token 静默续期）
+   * POST /api/auth/refresh
+   * 无需登录（accessToken 过期时前端才会调用，携带 refreshToken 换新令牌对）
+   * @param dto { refreshToken }
+   * @returns 全新的 { accessToken, refreshToken, userInfo }（refresh 轮换，前端整体覆盖保存）
+   */
+  @ApiOperation({
+    summary: '刷新令牌（静默续期）',
+    description:
+      '前端拦截器收到业务接口 40101 时调用本接口：携带 refreshToken 换取全新 accessToken + refreshToken 并重试原请求。注意 refreshToken 一次一换（轮换），换新成功后旧 refreshToken 立即作废，需整体覆盖保存。并发 401 时前端应合并为一次刷新（共享同一个刷新 Promise）。',
+  })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      '刷新成功，code=0。data = { accessToken, refreshToken, userInfo }。accessToken 默认 2h，refreshToken 默认 7d。',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'refreshToken 无效/过期/类型错误，code=40101。前端应清空本地令牌并跳转登录页。',
+  })
+  @Post('refresh')
+  async refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto.refreshToken)
   }
 
   /**
