@@ -15,11 +15,11 @@ datasource db {
  */
 model User {
   /// 主键，自增 ID
-  id           Int       @id @default(autoincrement())
+  id           Int      @id @default(autoincrement())
   /// 用户名（唯一，4-20 位字母数字下划线）
-  username     String    @unique
+  username     String   @unique
   /// 邮箱（唯一）
-  email        String    @unique
+  email        String   @unique
   /// bcrypt 加密后的密码哈希
   passwordHash String
   /// 昵称，可空
@@ -29,16 +29,18 @@ model User {
   /// 用户主题（默认 light，可选：light/dark/system）
   theme        String   @default("light") @db.VarChar(10)
   /// 记录创建时间
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime @default(now())
   /// 记录更新时间
-  updatedAt    DateTime  @updatedAt
+  updatedAt    DateTime @updatedAt
 
   /// 一个用户拥有多份简历，删除用户时级联删除所有简历
-  resumes       Resume[]
+  resumes      Resume[]
   /// 一对多关联：用户配置的多个 AI 厂商
-  aiProviders   AiProvider[]
+  aiProviders  AiProvider[]
   /// 一对一关联：用户的 AI 偏好（当前选中厂商 + 润色提示词）
-  aiPreference  AiPreference?
+  aiPreference AiPreference?
+  /// 一对多关联：用户的 AI 会话（AI 面试 + AI 对话共用）
+  aiSessions   AiSession[]
 }
 
 /**
@@ -47,22 +49,24 @@ model User {
  */
 model Resume {
   /// 简历短 ID，5 位字符串（与前端保持一致的生成规则）
-  id          String    @id @db.VarChar(10)
+  id         String    @id @db.VarChar(10)
   /// 所属用户 ID（外键）
-  userId      Int
+  userId     Int
   /// 使用的模板 ID
-  templateId  String
+  templateId String
   /// 简历标题
-  title       String
+  title      String
   /// 完整简历内容（JSON 格式，对应前端 Resume 接口的完整对象）
-  content     Json
+  content    Json
   /// 创建时间
-  createdAt   DateTime  @default(now())
+  createdAt  DateTime  @default(now())
   /// 更新时间
-  updatedAt   DateTime?
+  updatedAt  DateTime?
 
   /// 与 User 表的关联关系：N : 1，级联删除
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 一对多关联：使用该简历的 AI 面试会话
+  interviewSessions InterviewSession[]
 
   /// 索引：按 userId 加速查询用户的全部简历
   @@index([userId])
@@ -77,24 +81,24 @@ model AiProvider {
   /// 所属用户 ID（外键）
   userId       Int      @map("user_id")
   /// 厂商标识：deepseek / doubao / openai / custom-xxx
-  providerId   String   @db.VarChar(64) @map("provider_id")
+  providerId   String   @map("provider_id") @db.VarChar(64)
   /// 自定义供应商名称（内置厂商为空，用于路由 AI 请求）
-  providerName String?  @db.VarChar(64) @map("provider_name")
+  providerName String?  @map("provider_name") @db.VarChar(64)
   /// 加密后的 API Key（对称加密后的二进制，加密方案见设计文档第三节）
-  apiKeyCipher Bytes?   @db.VarBinary(512) @map("api_key_cipher")
+  apiKeyCipher Bytes?   @map("api_key_cipher") @db.VarBinary(512)
   /// API Key 尾号 4 位，用于脱敏展示
-  apiKeyLast4  String?  @db.Char(4) @map("api_key_last4")
+  apiKeyLast4  String?  @map("api_key_last4") @db.Char(4)
   /// 该厂商下默认使用的模型 ID
-  modelId      String?  @db.VarChar(128) @map("model_id")
+  modelId      String?  @map("model_id") @db.VarChar(128)
   /// API 接口地址（自定义厂商或代理地址）
-  apiEndpoint  String?  @db.VarChar(255) @map("api_endpoint")
+  apiEndpoint  String?  @map("api_endpoint") @db.VarChar(255)
   /// 创建时间
   createdAt    DateTime @default(now()) @map("created_at")
   /// 更新时间
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   /// 与 User 表的关联关系：N : 1，级联删除
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// 唯一约束：同一用户下厂商标识唯一（对应设计文档的 uk_user_provider）
   @@unique([userId, providerId], map: "uk_user_provider")
@@ -107,15 +111,195 @@ model AiPreference {
   /// 用户 ID（主键即外键，一对一）
   userId             Int      @id @map("user_id")
   /// 当前选中的厂商 ID（对应 ai_provider.providerId）
-  selectedProviderId String?  @db.VarChar(64) @map("selected_provider_id")
+  selectedProviderId String?  @map("selected_provider_id") @db.VarChar(64)
   /// 自定义润色提示词
-  polishPrompt       String?  @db.Text @map("polish_prompt")
+  polishPrompt       String?  @map("polish_prompt") @db.Text
   /// 更新时间
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   /// 与 User 表的关联关系：1 : 1，级联删除
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// 数据库表名映射为设计文档中的 snake_case 命名
   @@map("ai_preference")
+}
+
+/**
+ * ==================== AI 会话（AI 面试 / AI 对话） ====================
+ */
+
+/// 会话类型枚举
+enum SessionType {
+  /// AI 面试
+  interview
+  /// AI 对话（智能助手）
+  chat
+}
+
+/// 会话状态枚举（软删除：deleted 仅标记，不物理删除）
+enum SessionStatus {
+  /// 进行中 / 正常
+  active
+  /// 已归档
+  archived
+  /// 已删除（软删除）
+  deleted
+}
+
+/**
+ * AI 会话基表
+ * AI 面试与 AI 对话共用的会话骨架，与 User 一对多；
+ * 面试场景的扩展信息（岗位/难度/评分）在 InterviewSession 一对一扩展表中
+ */
+model AiSession {
+  /// 主键，自增 BigInt（消息表增量同步以单调递增 ID 为游标）
+  id         BigInt        @id @default(autoincrement())
+  /// 所属用户 ID（外键）
+  userId     Int           @map("user_id")
+  /// 会话类型：interview = AI 面试 / chat = AI 对话
+  type       SessionType
+  /// 会话标题（由首条用户消息截取生成，用于会话列表展示）
+  title      String        @db.VarChar(128)
+  /// 当时使用的厂商标识（软引用 ai_provider.provider_id，不设外键，厂商删除后历史会话仍可查）
+  providerId String?       @map("provider_id") @db.VarChar(64)
+  /// 当时使用的模型 ID（软引用，同上）
+  modelId    String?       @map("model_id") @db.VarChar(128)
+  /// 会话状态：active 进行中 / archived 已归档 / deleted 已删除（软删除）
+  status     SessionStatus @default(active)
+  /// 创建时间
+  createdAt  DateTime      @default(now()) @map("created_at")
+  /// 最近活跃时间（每写入一条消息同步更新，用于会话列表排序与增量同步游标）
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  /// 与 User 表的关联关系：N : 1，级联删除
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 一对多关联：会话下的所有消息
+  messages         AiSessionMessage[]
+  /// 一对一关联：面试会话的扩展信息（仅 type = interview 时存在）
+  interviewSession InterviewSession?
+
+  /// 索引：会话列表分页主索引（按用户 + 类型 + 最近活跃倒序）
+  @@index([userId, type, updatedAt(sort: Desc)], map: "idx_user_type_updated")
+  /// 索引：按用户 + 状态筛选
+  @@index([userId, status], map: "idx_user_status")
+  /// 数据库表名映射为设计文档中的 snake_case 命名
+  @@map("ai_session")
+}
+
+/// 消息角色枚举（与前端 ChatMessageDto 的 role 保持一致）
+enum MessageRole {
+  /// 系统提示词
+  system
+  /// 用户输入
+  user
+  /// AI 回复
+  assistant
+}
+
+/// 消息业务类型枚举（面试场景标记消息用途，对话场景一律为 normal）
+enum MessageKind {
+  /// 面试题（AI 出的题目）
+  question
+  /// 用户对面试题的回答
+  answer
+  /// AI 对回答的评价
+  evaluation
+  /// 普通对话消息
+  normal
+}
+
+/// 流式写入状态枚举
+enum StreamStatus {
+  /// 流式写入中（AI 回复尚未接收完毕）
+  streaming
+  /// 写入完成
+  done
+  /// 流式中断失败（保留已收到的部分内容便于排查）
+  failed
+}
+
+/**
+ * AI 会话消息表
+ * 存储所有会话的对话轮次，与 AiSession 一对多；本表是项目中增长最快的表，
+ * 查询一律走 (session_id, id) 复合索引并使用游标分页，避免 offset 深翻页
+ */
+model AiSessionMessage {
+  /// 主键，自增 BigInt（同一会话内 ID 单调递增，兼做增量拉取游标）
+  id               BigInt       @id @default(autoincrement())
+  /// 所属会话 ID（外键）
+  sessionId        BigInt       @map("session_id")
+  /// 消息角色：system / user / assistant
+  role             MessageRole
+  /// 消息业务类型：question / answer / evaluation / normal（面试专用标记）
+  kind             MessageKind  @default(normal)
+  /// 消息正文（LongText 避免长回答被 TEXT 的 64K 上限截断）
+  content          String       @db.LongText
+  /// 输入 token 消耗（来自上游 API 的 usage，assistant 消息记录）
+  promptTokens     Int          @default(0) @map("prompt_tokens")
+  /// 输出 token 消耗（同上）
+  completionTokens Int          @default(0) @map("completion_tokens")
+  /// 扩展数据（面试题难度、评分、引用的简历片段等结构化信息）
+  extra            Json?
+  /// 流式写入状态：streaming / done / failed（流式响应落库的中间态标记）
+  streamStatus     StreamStatus @default(done) @map("stream_status")
+  /// 创建时间（消息不可变，只写不改，无更新时间）
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  /// 与 AiSession 表的关联关系：N : 1，级联删除（会话删除则消息随之删除）
+  session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  /// 索引：按会话拉取消息（覆盖游标分页 WHERE session_id AND id < ? ORDER BY id DESC）
+  @@index([sessionId, id], map: "idx_session_id")
+  /// 索引：面试场景查某会话的所有题目（WHERE session_id AND kind = ?）
+  @@index([sessionId, kind], map: "idx_session_kind")
+  /// 数据库表名映射为设计文档中的 snake_case 命名
+  @@map("ai_session_message")
+}
+
+/// 面试难度枚举
+enum Difficulty {
+  /// 简单
+  easy
+  /// 中等
+  medium
+  /// 困难
+  hard
+}
+
+/**
+ * 面试会话扩展表
+ * 与 AiSession 一对一（主键即外键），仅 type = interview 的会话有记录；
+ * 面试业务演进频繁（评分规则、面试官风格等），变化隔离在本表，不动会话基表
+ */
+model InterviewSession {
+  /// 会话 ID（主键即外键，一对一）
+  sessionId   BigInt     @id @map("session_id")
+  /// 关联的简历 ID（外键，面试以简历为出题种子）
+  resumeId    String     @map("resume_id") @db.VarChar(10)
+  /// 目标岗位（如"前端工程师"），影响出题方向
+  jobTitle    String?    @map("job_title") @db.VarChar(128)
+  /// 面试难度档位
+  difficulty  Difficulty @default(medium)
+  /// 题目类型（技术 / 行为 / 项目深挖等，可空表示混合出题）
+  category    String?    @db.VarChar(64)
+  /// 面试总分（AI 汇总评分，面试结束后回填）
+  totalScore  Decimal?   @map("total_score") @db.Decimal(5, 2)
+  /// AI 生成的面试总结报告（面试结束后回填）
+  summary     String?    @db.Text
+  /// 面试总耗时（秒）
+  durationSec Int?       @map("duration_sec")
+  /// 创建时间
+  createdAt   DateTime   @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  /// 与 AiSession 表的关联关系：1 : 1，级联删除
+  session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// 与 Resume 表的关联关系：N : 1，级联删除（简历删除则面试记录随之删除）
+  resume  Resume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  /// 索引：按简历查关联的面试记录
+  @@index([resumeId], map: "idx_resume")
+  /// 数据库表名映射为设计文档中的 snake_case 命名
+  @@map("interview_session")
 }
