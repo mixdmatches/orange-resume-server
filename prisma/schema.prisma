@@ -266,6 +266,16 @@ enum Difficulty {
   hard
 }
 
+/// 面试状态枚举（面试专属状态机，独立于 ai_session.status 的通用会话状态）
+enum InterviewStatus {
+  /// 题库待生成（刚创建面试会话，还没调用 start）
+  pending_questions
+  /// 面试进行中（题库已生成，正在逐题答题）
+  in_progress
+  /// 面试结束（所有题答完或主动 finish，已生成总结+评分）
+  finished
+}
+
 /**
  * 面试会话扩展表
  * 与 AiSession 一对一（主键即外键），仅 type = interview 的会话有记录；
@@ -273,25 +283,35 @@ enum Difficulty {
  */
 model InterviewSession {
   /// 会话 ID（主键即外键，一对一）
-  sessionId   BigInt     @id @map("session_id")
+  sessionId   BigInt          @id @map("session_id")
   /// 关联的简历 ID（外键，面试以简历为出题种子）
-  resumeId    String     @map("resume_id") @db.VarChar(10)
+  resumeId    String          @map("resume_id") @db.VarChar(10)
   /// 目标岗位（如"前端工程师"），影响出题方向
-  jobTitle    String?    @map("job_title") @db.VarChar(128)
+  jobTitle    String?         @map("job_title") @db.VarChar(128)
   /// 面试难度档位
-  difficulty  Difficulty @default(medium)
+  difficulty  Difficulty      @default(medium)
   /// 题目类型（技术 / 行为 / 项目深挖等，可空表示混合出题）
-  category    String?    @db.VarChar(64)
+  category    String?         @db.VarChar(64)
+  /// 面试总轮数（前端指定，默认 5；动态出题模式按此轮数逐轮生成）
+  questionCount Int           @default(5) @map("question_count")
+  /// 面试岗位描述（可选）
+  jobDescription String?         @map("job_description") @db.VarChar(256)
+  /// 面试状态：pending_questions → in_progress → finished
+  status      InterviewStatus @default(pending_questions)
+  /// 面试开始时间（start 时写入，用于计算 duration_sec）
+  startedAt   DateTime?       @map("started_at")
   /// 面试总分（AI 汇总评分，面试结束后回填）
-  totalScore  Decimal?   @map("total_score") @db.Decimal(5, 2)
+  totalScore  Decimal?        @map("total_score") @db.Decimal(5, 2)
   /// AI 生成的面试总结报告（面试结束后回填）
-  summary     String?    @db.Text
+  summary     String?         @db.Text
+  /// 结构化评分详情（JSON，契约冻结见 interview-llm.service）
+  scoreDetail Json?           @map("score_detail")
   /// 面试总耗时（秒）
-  durationSec Int?       @map("duration_sec")
+  durationSec Int?            @map("duration_sec")
   /// 创建时间
-  createdAt   DateTime   @default(now()) @map("created_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
   /// 更新时间
-  updatedAt   DateTime   @updatedAt @map("updated_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
 
   /// 与 AiSession 表的关联关系：1 : 1，级联删除
   session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
