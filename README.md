@@ -6,7 +6,8 @@ orange-resume 的后端服务，提供用户认证、简历管理、OpenAI 兼�
 > - 本项目需要 Node.js 20+、pnpm 11 和 MySQL 8.0+。
 > - 启动前必须创建 `.env` 并执行 Prisma 数据库迁移。
 > - 普通 JSON 接口无论成功还是失败，HTTP 状态码目前都返回 `200`，请通过响应体中的 `code` 判断结果。
-> - AI 接口使用调用方提供的模型配置，API Key 仅在当前请求中使用，不写入数据库。
+> - AI 厂商配置（API Key、模型、端点）通过 AES-256-GCM 加密后存入 `ai_provider` 表，密钥由环境变量 `AI_CONFIG_ENCRYPTION_KEY` 提供。
+> - 认证使用双 Token 机制：`accessToken`（默认 2h，业务请求使用）+ `refreshToken`（默认 7d，仅用于刷新），过期后调用 `POST /auth/refresh` 静默换对。
 
 ## 快速开始
 
@@ -43,7 +44,9 @@ pnpm install
 ```dotenv
 DATABASE_URL="mysql://root:your_password@127.0.0.1:3306/orange_resume"
 JWT_SECRET="replace-with-a-long-random-secret"
-JWT_EXPIRES_IN="7d"
+JWT_ACCESS_EXPIRES_IN="2h"
+JWT_REFRESH_EXPIRES_IN="7d"
+AI_CONFIG_ENCRYPTION_KEY="64-char-hex-string-for-ai-config-encryption"
 PORT=3000
 ```
 
@@ -51,7 +54,9 @@ PORT=3000
 | --- | --- | --- | --- |
 | `DATABASE_URL` | 是 | 无 | Prisma 使用的 MySQL 连接地址 |
 | `JWT_SECRET` | 生产环境必须 | `fallback-secret-change-me` | JWT 签名密钥，生产环境不得使用默认值 |
-| `JWT_EXPIRES_IN` | 否 | `7d` | JWT 有效期，例如 `7d`、`12h` |
+| `JWT_ACCESS_EXPIRES_IN` | 否 | `2h` | accessToken 有效期（短寿命，降低泄露风险） |
+| `JWT_REFRESH_EXPIRES_IN` | 否 | `7d` | refreshToken 有效期（回退兼容旧配置 `JWT_EXPIRES_IN`） |
+| `AI_CONFIG_ENCRYPTION_KEY` | 是 | 无 | 64 位 hex 字符串，用于 AES-256-GCM 加密 AI 厂商 API Key |
 | `PORT` | 否 | `3000` | HTTP 服务端口 |
 
 如果 MySQL 密码包含 `@`、`:`、`/`、`#` 等特殊字符，需要先进行 URL 编码。
@@ -116,7 +121,7 @@ $loginResponse = Invoke-RestMethod `
   -ContentType 'application/json' `
   -Body $loginBody
 
-$token = $loginResponse.data.token
+$token = $loginResponse.data.accessToken
 ```
 
 使用 JWT 获取当前用户资料：
@@ -131,12 +136,15 @@ Invoke-RestMethod `
 ## 主要能力
 
 - 用户注册、登录、登出和资料查询
-- bcrypt 密码哈希和 JWT Bearer 身份认证
+- 双 Token 认证机制（accessToken 2h + refreshToken 7d 轮换），bcrypt 密码哈希
 - 简历创建、列表、详情、更新、删除、批量删除和复制
 - 简历所有权检查，阻止用户访问其他用户的简历
 - 简历内容以 MySQL JSON 字段保存
+- AI 厂商配置管理：多厂商支持（内置 + 自定义），API Key AES-256-GCM 加密存储
+- AI 偏好设置：选中厂商、默认模型、自定义润色提示词
 - AI 语法检查、简历评分、岗位匹配、面试题生成和 PDF 文本结构化
-- AI 对话和自我介绍 SSE 流式输出
+- AI 对话 SSE 流式输出（含会话持久化、消息游标分页）
+- AI 模拟面试：逐轮动态出题、追问式面试、SSE 全程流式、岗位描述参考、面试结束后静默批量评价
 - DTO 参数校验、统一响应结构和统一异常处理
 - Swagger UI 在线接口文档
 
@@ -161,20 +169,23 @@ Invoke-RestMethod `
 orange-resume-server/
 ├─ prisma/
 │  ├─ migrations/              # 数据库迁移
-│  └─ schema.prisma            # User、Resume 数据模型
+│  └─ schema.prisma            # User / Resume / AiProvider / AiPreference / AiSession / AiSessionMessage / InterviewSession 数据模型
 ├─ src/
 │  ├─ common/
 │  │  ├─ decorators/           # CurrentUser 参数装饰器
 │  │  ├─ dto/                  # 统一响应结构和业务码
 │  │  ├─ filters/              # 全局异常过滤器
-│  │  ├─ guards/               # JWT 守卫
+│  │  ├─ guards/               # JWT 守卫（区分 access / refresh）
 │  │  ├─ interceptors/         # 成功响应包装
-│  │  └─ types/                # 公共类型
+│  │  ├─ types/                # 公共类型（JWT Payload）
+│  │  └─ utils/                # 加密工具（AES-256-GCM）
 │  ├─ modules/
-│  │  ├─ ai/                   # AI 代理和 SSE
-│  │  ├─ auth/                 # 注册、登录和 JWT 签发
+│  │  ├─ ai/                   # AI 代理：语法检查、评分、岗位匹配、面试题、PDF 结构化
+│  │  ├─ ai-session/           # AI 对话会话：会话 CRUD、消息流式落库、游标分页
+│  │  ├─ auth/                 # 注册、登录、双 Token 签发与刷新、登出
+│  │  ├─ interview/            # AI 模拟面试：逐轮动态出题、追问式 SSE 流、总结、静默评价
 │  │  ├─ resume/               # 简历 CRUD
-│  │  └─ user/                 # 用户数据访问
+│  │  └─ user/                 # 用户资料、AI 厂商配置、AI 偏好
 │  ├─ prisma/                  # PrismaModule 和 PrismaService
 │  ├─ app.module.ts            # 根模块
 │  └─ main.ts                  # 应用启动、CORS、Swagger 和全局组件
