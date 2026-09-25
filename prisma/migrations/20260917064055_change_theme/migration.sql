@@ -8,7 +8,7 @@
 ALTER TABLE `user_preference` DROP FOREIGN KEY `user_preference_user_id_fkey`;
 
 -- AlterTable
-ALTER TABLE `user` ADD COLUMN `theme` VARCHAR(10) NOT NULL DEFAULT 'light';
+ALTER TABLE `User` ADD COLUMN `theme` VARCHAR(10) NOT NULL DEFAULT 'light';
 
 -- DropTable
 DROP TABLE `user_preference`;

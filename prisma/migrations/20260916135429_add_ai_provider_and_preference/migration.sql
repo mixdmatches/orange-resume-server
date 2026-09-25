@@ -5,10 +5,10 @@
 
 */
 -- DropForeignKey
-ALTER TABLE `useraiconfig` DROP FOREIGN KEY `UserAiConfig_userId_fkey`;
+ALTER TABLE `UserAiConfig` DROP FOREIGN KEY `UserAiConfig_userId_fkey`;
 
 -- DropTable
-DROP TABLE `useraiconfig`;
+DROP TABLE `UserAiConfig`;
 
 -- CreateTable
 CREATE TABLE `ai_provider` (

@@ -9,7 +9,7 @@
 ALTER TABLE `ai_preference` DROP FOREIGN KEY `ai_preference_user_id_fkey`;
 
 -- AlterTable
-ALTER TABLE `user` DROP COLUMN `preferences`;
+ALTER TABLE `User` DROP COLUMN `preferences`;
 
 -- DropTable
 DROP TABLE `ai_preference`;
