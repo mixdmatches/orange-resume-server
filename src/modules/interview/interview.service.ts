@@ -77,6 +77,7 @@ export interface InterviewDetail {
  * 面试编排服务
  *
  * 状态机：pending_questions ──start──→ in_progress ──all answered/finish──→ finished
+ * 附加：客户端中途中止（停止生成/断开）→ stopped；继续答题或重新出题后恢复 in_progress
  *
  * 职责：
  * 1. 创建面试会话（ai_session + interview_session 双写，status=pending_questions）
@@ -109,7 +110,7 @@ export class InterviewService {
     const preference = await this.prisma.aiPreference.findUnique({ where: { userId } })
     const finalProviderId = providerId || preference?.selectedProviderId
     if (!finalProviderId) {
-      throw new BadRequestException('请先在设置中选择 AI 服务商')
+      throw new BadRequestException('请先前往设置页，选择并保存要使用的 AI 服务商')
     }
     return this.userAiConfigService.getActiveCredentials(userId, finalProviderId)
   }
@@ -238,9 +239,10 @@ export class InterviewService {
    *
    * 按 interview_session.status 路由行为：
    * - pending_questions → 开始面试：generating → next_question(round 1)
-   * - in_progress + content → 答题：evaluation_start → evaluation_done → next_question / summary
-   * - in_progress + finishOnly=true → 提前结束：summary_start → summary* → done
+   * - in_progress / stopped + content → 答题：evaluation_start → evaluation_done → next_question / summary
+   * - in_progress / stopped + finishOnly=true → 提前结束：summary_start → summary* → done
    * - finished → error 事件
+   * - stopped（用户中途中止）→ 与 in_progress 同等对待，答题/总结后自动恢复
    *
    * 所有错误（含 404）都在 SSE 连接建立后以 error 事件推送（响应头已 flush，无法改 HTTP 状态码）
    */
@@ -250,18 +252,32 @@ export class InterviewService {
     dto: InterviewStreamDto,
   ): Observable<{ data: string }> {
     return new Observable((subscriber) => {
+      /** 流式 LLM 调用的中止控制器（客户端中途中止时统一 abort，避免上游继续生成浪费 token） */
+      const streamAbort = new AbortController()
+      /** 流是否已正常完成（finish() 前置位，teardown 据此区分"正常结束"与"用户中止"） */
+      let finished = false
+      /** 当前面试会话 ID（异步校验通过后填充，teardown 据此更新状态） */
+      let interviewId: bigint | null = null
+
       const push: SsePush = (payload: InterviewSseEvent) => {
         subscriber.next({ data: JSON.stringify(payload) })
+      }
+
+      /** 统一收口：标记流正常完成后关闭（teardown 看到 finished=true 就不做中止处理） */
+      const finish = () => {
+        finished = true
+        subscriber.complete()
       }
 
       ;(async () => {
         try {
           // 1. 校验会话归属 + 状态
           const interview = await this.findOwnedInterview(userId, sessionIdStr)
+          interviewId = interview.id
           const iSession = interview.interviewSession
           if (iSession.status === 'finished') {
             push({ event: 'error', message: '面试已结束' })
-            subscriber.complete()
+            finish()
             return
           }
 
@@ -272,18 +288,19 @@ export class InterviewService {
           )
 
           // 3a. 未开始 → 流式出第一题（round=1，出完落库并把状态推进到 in_progress）
+          //     （stopped 状态的第一题被中止后，重新触发流也会走这里重新出题）
           if (iSession.status === 'pending_questions') {
-            await this.runAskQuestion(interview, push, credentials, 1)
-            subscriber.complete()
+            await this.runAskQuestion(interview, push, credentials, 1, streamAbort.signal)
+            finish()
             return
           }
 
-          // 3b. 进行中 → 答题 / 提前结束
+          // 3b. 进行中（含 stopped 恢复）→ 答题 / 提前结束
           const finishOnly = dto.finishOnly === true
           const content = dto.content?.trim() ?? ''
           if (!content && !finishOnly) {
             push({ event: 'error', message: '请填写回答内容' })
-            subscriber.complete()
+            finish()
             return
           }
 
@@ -296,8 +313,8 @@ export class InterviewService {
 
           // 提前结束且放弃当前题（不带 content）：不落库回答，直接总结
           if (finishOnly && !content) {
-            await this.runSummary(interview, push, credentials)
-            subscriber.complete()
+            await this.runSummary(interview, push, credentials, streamAbort.signal)
+            finish()
             return
           }
 
@@ -314,8 +331,8 @@ export class InterviewService {
 
           // 提前结束且提交了本题回答：落库后不评价，直接总结
           if (finishOnly) {
-            await this.runSummary(interview, push, credentials)
-            subscriber.complete()
+            await this.runSummary(interview, push, credentials, streamAbort.signal)
+            finish()
             return
           }
 
@@ -324,24 +341,50 @@ export class InterviewService {
 
           // 7. 还有轮次 → 流式出下一题（追问式）；轮次用尽 → 总结
           if (hasNext) {
-            await this.runAskQuestion(interview, push, credentials, currentRound + 1)
-            subscriber.complete()
+            await this.runAskQuestion(
+              interview,
+              push,
+              credentials,
+              currentRound + 1,
+              streamAbort.signal,
+            )
+            finish()
             return
           }
-          await this.runSummary(interview, push, credentials)
-          subscriber.complete()
+          await this.runSummary(interview, push, credentials, streamAbort.signal)
+          finish()
         } catch (error) {
           console.error('[Interview] 面试流程失败', error)
           push({
             event: 'error',
             message: error instanceof Error ? error.message : '面试流程失败',
           })
-          subscriber.complete()
+          finish()
         }
       })()
 
-      // 客户端断开：不中止进行中的 LLM 调用（回答/评价会自然落库，刷新后可从详情恢复）
-      return () => {}
+      // teardown：SSE 连接关闭时触发（正常 complete 与客户端断开都会走到这里）
+      return () => {
+        // 正常完成（done/error 事件推送完毕后连接关闭），不做中止处理
+        if (finished) return
+
+        // 用户中途中止（停止生成按钮 / 关闭页面 / 刷新）：
+        // 1. abort 正在进行中的 LLM 上游请求（出题/总结流式生成），避免白白消耗 token
+        streamAbort.abort()
+        // 2. 面试尚未结束 → 状态标记为 stopped（数据库留痕，可恢复继续）
+        //    updateMany 带 status 条件，防止竞态覆盖刚写入的 finished
+        if (interviewId) {
+          this.prisma.interviewSession
+            .updateMany({
+              where: {
+                sessionId: interviewId,
+                status: { in: ['pending_questions', 'in_progress'] },
+              },
+              data: { status: 'stopped' },
+            })
+            .catch((e) => console.error('[Interview] 标记中止状态失败', e))
+        }
+      }
     })
   }
 
@@ -354,6 +397,7 @@ export class InterviewService {
    * 事件序列：question_start → question*（token 流）→ question_done
    * - 第 1 轮：基于简历出开场题（外层在 pending_questions 时以 round=1 调用）
    * - 后续轮：基于历史问答追问或切换维度（外层在答题评价后以 round=上一轮+1 调用）
+   * - 出完落库时把状态（含 stopped 恢复）统一推进为 in_progress，首轮同时记录 startedAt
    * 题目文本在流式完成后一次性落库（流式中断则不落库，用户重连后本轮重新出题）
    */
   private async runAskQuestion(
@@ -361,6 +405,7 @@ export class InterviewService {
     push: SsePush,
     credentials: AiCredentials,
     round: number,
+    signal?: AbortSignal,
   ): Promise<void> {
     const iSession = interview.interviewSession
     const totalRounds = iSession.questionCount
@@ -377,7 +422,7 @@ export class InterviewService {
     const history = await this.collectHistory(interview.id)
 
     // 3. 流式出题：逐 token 推送，同时累积全文；流结束后从 handle 拿 usage
-    const abort = new AbortController()
+    //    signal 来自外层 interviewStream（客户端中途中止时被 abort）
     let fullQuestion = ''
     const qHandle = this.interviewLlm.streamQuestion(
       {
@@ -388,7 +433,7 @@ export class InterviewService {
         roundIndex: round,
         totalRounds,
         history,
-        signal: abort.signal,
+        signal,
       },
       credentials,
     )
@@ -409,7 +454,7 @@ export class InterviewService {
       throw new BadRequestException('题目生成失败，请重试')
     }
 
-    // 4. 落库题目（含 token 统计）+ 推完成事件；首轮同时把状态推进到 in_progress
+    // 4. 落库题目（含 token 统计）+ 推完成事件；状态统一推进为 in_progress（恢复 stopped），首轮记录 startedAt
     await this.prisma.$transaction(async (tx) => {
       await tx.aiSessionMessage.create({
         data: {
@@ -422,13 +467,13 @@ export class InterviewService {
           extra: { roundIndex: round },
         },
       })
-      if (round === 1) {
-        // 第一题出完才算正式开始（startedAt 用于计算面试总时长）
-        await tx.interviewSession.update({
-          where: { sessionId: interview.id },
-          data: { status: 'in_progress', startedAt: new Date() },
-        })
-      }
+      await tx.interviewSession.update({
+        where: { sessionId: interview.id },
+        data: {
+          status: 'in_progress',
+          ...(round === 1 ? { startedAt: new Date() } : {}),
+        },
+      })
       // 刷新 ai_session.updatedAt
       await tx.aiSession.update({
         where: { id: interview.id },
@@ -478,6 +523,7 @@ export class InterviewService {
     interview: AiSession & { interviewSession: InterviewSession },
     push: SsePush,
     credentials: AiCredentials,
+    signal?: AbortSignal,
   ): Promise<void> {
     // 1. 收集所有 Q&A
     const allMessages = await this.prisma.aiSessionMessage.findMany({
@@ -540,6 +586,7 @@ export class InterviewService {
           jobTitle: interview.interviewSession.jobTitle ?? undefined,
           jobDescription: interview.interviewSession.jobDescription ?? undefined,
           difficulty: interview.interviewSession.difficulty,
+          signal,
         },
         credentials,
       )

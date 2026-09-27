@@ -96,6 +96,7 @@ interface SummaryPromptContext {
   jobTitle?: string
   jobDescription?: string
   difficulty: string
+  signal?: AbortSignal
 }
 
 /**
@@ -515,11 +516,13 @@ ${
           try {
             stream = (await openai.chat.completions.create(
               buildBody(true) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+              { signal: ctx.signal },
             )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
           } catch {
             console.warn('[InterviewLlm] 厂商不支持 stream_options，降级为无 usage 统计重试')
             stream = (await openai.chat.completions.create(
               buildBody(false) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+              { signal: ctx.signal },
             )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
           }
 

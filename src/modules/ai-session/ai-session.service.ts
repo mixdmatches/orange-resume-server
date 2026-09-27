@@ -298,7 +298,7 @@ export class AiSessionService {
     const preference = await this.prisma.aiPreference.findUnique({ where: { userId } })
     const providerId = dto.providerId || preference?.selectedProviderId
     if (!providerId) {
-      throw new BadRequestException('请先在设置中选择 AI 服务商')
+      throw new BadRequestException('请先前往设置页，选择并保存要使用的 AI 服务商')
     }
     const credentials = await this.userAiConfigService.getActiveCredentials(userId, providerId)
     const openai = this.createOpenAIClient(credentials)
