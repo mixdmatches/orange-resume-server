@@ -10,23 +10,20 @@ import type {
   SessionStatus,
   SessionType,
 } from '@prisma/client'
-import type { AiCredentials } from '../user/user-ai-config.service'
-import { UserAiConfigService } from '../user/user-ai-config.service'
+import { AiCommonService } from '../shared/ai-common.service'
+import { CredentialService } from '../shared/credential.service'
+import { SessionGuardService } from '../shared/session-guard.service'
+import {
+  DEFAULT_SESSION_TITLE,
+  TITLE_MAX_LENGTH,
+  MAX_HISTORY_MESSAGES,
+} from '../shared/shared.constants'
 import { PrismaService } from '@/prisma/prisma.service'
 import type { CreateSessionDto } from './dto/create-session.dto'
 import type { UpdateSessionDto } from './dto/update-session.dto'
 import type { ListSessionsDto } from './dto/list-sessions.dto'
 import type { ListMessagesDto } from './dto/list-messages.dto'
 import type { SendMessageDto } from './dto/send-message.dto'
-
-/** 新会话的默认标题（首条用户消息发出后自动用消息内容截取覆盖） */
-const DEFAULT_SESSION_TITLE = '新对话'
-
-/** 标题截取长度（取首条用户消息前 50 个字符） */
-const TITLE_MAX_LENGTH = 50
-
-/** 组装上下文时最多携带的历史消息条数（防止 token 超限） */
-const MAX_HISTORY_MESSAGES = 20
 
 /** SSE 推送的事件格式（与 ai.service 的 SseEventPayload 兼容，额外扩展了统计字段） */
 interface SessionSseEventPayload {
@@ -102,7 +99,9 @@ export interface SerializedInterviewSession {
 export class AiSessionService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly userAiConfigService: UserAiConfigService,
+    private readonly aiCommon: AiCommonService,
+    private readonly credentialService: CredentialService,
+    private readonly sessionGuard: SessionGuardService,
   ) {}
 
   // ======================================================================
@@ -178,7 +177,7 @@ export class AiSessionService {
    * @param sessionIdStr 会话 ID 字符串（URL 参数）
    */
   async getSession(userId: number, sessionIdStr: string): Promise<SerializedSession> {
-    const session = await this.findOwnedSession(userId, sessionIdStr)
+    const session = await this.sessionGuard.findOwnedSessionWithInterview(userId, sessionIdStr)
     return this.serializeSession(session)
   }
 
@@ -196,7 +195,7 @@ export class AiSessionService {
     if (!dto.title && !dto.status) {
       throw new BadRequestException('至少提供 title 或 status 中的一个更新字段')
     }
-    const session = await this.findOwnedSession(userId, sessionIdStr)
+    const session = await this.sessionGuard.findOwnedSessionWithInterview(userId, sessionIdStr)
     const updated = await this.prisma.aiSession.update({
       where: { id: session.id },
       data: {
@@ -213,7 +212,7 @@ export class AiSessionService {
    * @param sessionIdStr 会话 ID 字符串
    */
   async deleteSession(userId: number, sessionIdStr: string): Promise<{ success: true }> {
-    const session = await this.findOwnedSession(userId, sessionIdStr)
+    const session = await this.sessionGuard.findOwnedSessionWithInterview(userId, sessionIdStr)
     await this.prisma.aiSession.update({
       where: { id: session.id },
       data: { status: 'deleted' },
@@ -242,7 +241,7 @@ export class AiSessionService {
     hasMore: boolean
     nextCursor: string | null
   }> {
-    const session = await this.findOwnedSession(userId, sessionIdStr)
+    const session = await this.sessionGuard.findOwnedSessionWithInterview(userId, sessionIdStr)
     const beforeId = dto.beforeId ? BigInt(dto.beforeId) : undefined
     // 多取一条用于判断是否还有下一页
     const rows = await this.prisma.aiSessionMessage.findMany({
@@ -289,7 +288,7 @@ export class AiSessionService {
     dto: SendMessageDto,
   ): Promise<Observable<{ data: string }>> {
     // 1. 校验会话：归属 + 类型 + 状态
-    const session = await this.findOwnedSession(userId, sessionIdStr)
+    const session = await this.sessionGuard.findOwnedSessionWithInterview(userId, sessionIdStr)
     if (session.type !== 'chat') {
       throw new BadRequestException('该会话不是对话类型，无法发送消息')
     }
@@ -297,11 +296,8 @@ export class AiSessionService {
     // 2. 解析凭证：显式指定的厂商优先，其次用户偏好中选中的厂商
     const preference = await this.prisma.aiPreference.findUnique({ where: { userId } })
     const providerId = dto.providerId || preference?.selectedProviderId
-    if (!providerId) {
-      throw new BadRequestException('请先前往设置页，选择并保存要使用的 AI 服务商')
-    }
-    const credentials = await this.userAiConfigService.getActiveCredentials(userId, providerId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.credentialService.resolveCredentials(userId, providerId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 3. 事务：落库用户消息 + 更新会话记录（含首条消息自动生成标题）
     const content = dto.content
@@ -430,7 +426,7 @@ export class AiSessionService {
             await finalize('failed').catch(() => {})
           }
           console.error('[AiSession] 会话流式对话失败（sessionId=%s）', String(session.id), error)
-          subscriber.error(new BadRequestException(this.formatError(error)))
+          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
 
@@ -448,47 +444,6 @@ export class AiSessionService {
   // ======================================================================
   // 内部辅助方法
   // ======================================================================
-
-  /**
-   * 解析并校验会话：ID 必须为纯数字字符串，且会话存在、属于当前用户、未软删除
-   * @param userId 当前登录用户 ID
-   * @param sessionIdStr URL 参数中的会话 ID 字符串
-   * @returns 会话记录（含面试扩展信息）
-   */
-  private async findOwnedSession(
-    userId: number,
-    sessionIdStr: string,
-  ): Promise<AiSession & { interviewSession: InterviewSession | null }> {
-    if (!/^\d+$/.test(sessionIdStr)) {
-      throw new NotFoundException('会话不存在')
-    }
-    const session = await this.prisma.aiSession.findFirst({
-      where: { id: BigInt(sessionIdStr), userId },
-      include: { interviewSession: true },
-    })
-    if (!session || session.status === 'deleted') {
-      throw new NotFoundException('会话不存在')
-    }
-    return session as AiSession & { interviewSession: InterviewSession | null }
-  }
-
-  /**
-   * 根据凭证动态创建 OpenAI SDK 客户端（同 ai.service 的策略）
-   * @param credentials 解密后的用户凭证
-   */
-  private createOpenAIClient(credentials: AiCredentials): OpenAI {
-    return new OpenAI({ apiKey: credentials.apiKey, baseURL: credentials.baseUrl })
-  }
-
-  /**
-   * 把 AI SDK 抛出的错误格式化为可读中文消息（同 ai.service 的策略）
-   * @param error 任意错误对象
-   */
-  private formatError(error: unknown): string {
-    const err = error as { message?: string }
-    if (err?.message) return err.message
-    return '生成失败，请重试'
-  }
 
   /**
    * 序列化会话记录：BigInt → string，保证可安全 JSON.stringify

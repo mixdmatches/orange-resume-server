@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
-import * as crypto from 'node:crypto'
 import { PrismaService } from '../../prisma/prisma.service'
+import { generateShortId } from '@/common/utils/short-id.util'
+import { toTimestamp } from '@/common/utils/date.util'
 import type { UpdateResumeDto, CreateResumeDto } from './dto/resume.dto'
 
 /**
@@ -40,22 +41,6 @@ export class ResumeService {
   // ==================================================================
 
   /**
-   * 生成 8 位短 ID（与前端策略保持一致）
-   * @returns 8 个字符长度的随机字符串
-   */
-  private generateShortId(): string {
-    return crypto.randomUUID().substring(0, 8)
-  }
-
-  /**
-   * DateTime → 毫秒时间戳（JS number）
-   * @param dt Prisma 返回的 Date 对象
-   */
-  private toTimestamp(dt?: Date): number | null {
-    return dt?.getTime() ?? null
-  }
-
-  /**
    * 根据 ID 读取简历记录，内部统一处理「不存在 / 无权限」
    *
    * @param userId 当前登录用户 ID
@@ -90,7 +75,7 @@ export class ResumeService {
    * @returns 新简历 id
    */
   async createResume(userId: number, dto: CreateResumeDto): Promise<{ id: string }> {
-    const id = dto.id || this.generateShortId()
+    const id = dto.id || generateShortId()
 
     await this.prisma.resume.create({
       data: {
@@ -134,8 +119,8 @@ export class ResumeService {
         id: r.id,
         title: r.title,
         templateId: r.templateId,
-        createdAt: this.toTimestamp(r.createdAt),
-        updatedAt: this.toTimestamp(r.updatedAt),
+        createdAt: toTimestamp(r.createdAt),
+        updatedAt: toTimestamp(r.updatedAt),
       })),
       total,
     }
@@ -161,8 +146,8 @@ export class ResumeService {
       id: resume.id,
       title: resume.title,
       templateId: resume.templateId,
-      createdAt: this.toTimestamp(resume.createdAt),
-      updatedAt: this.toTimestamp(resume.updatedAt),
+      createdAt: toTimestamp(resume.createdAt),
+      updatedAt: toTimestamp(resume.updatedAt),
     }
 
     return merged
@@ -197,7 +182,7 @@ export class ResumeService {
 
     return {
       id: updated.id,
-      updatedAt: this.toTimestamp(updated.updatedAt),
+      updatedAt: toTimestamp(updated.updatedAt),
     }
   }
 
@@ -241,7 +226,7 @@ export class ResumeService {
   async duplicateResume(userId: number, resumeId: string): Promise<{ newId: string }> {
     const source = await this.getResumeWithOwnerCheck(userId, resumeId)
 
-    const newId = this.generateShortId()
+    const newId = generateShortId()
     const newTitle = `${source.title} 副本`
     const contentCopy = (source.content ?? {}) as Record<string, any>
 

@@ -2,8 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Observable } from 'rxjs'
 import type { AiSession, InterviewSession, InterviewStatus, Prisma } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
-import { UserAiConfigService } from '../user/user-ai-config.service'
 import type { AiCredentials } from '../user/user-ai-config.service'
+import { CredentialService } from '../shared/credential.service'
+import { SessionGuardService } from '../shared/session-guard.service'
 import { InterviewLlmService, type InterviewScoreDetail } from './interview-llm.service'
 import type { CreateInterviewDto } from './dto/create-interview.dto'
 import type { InterviewStreamDto } from './dto/interview-stream.dto'
@@ -95,50 +96,14 @@ export interface InterviewDetail {
 export class InterviewService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly userAiConfigService: UserAiConfigService,
     private readonly interviewLlm: InterviewLlmService,
+    private readonly credentialService: CredentialService,
+    private readonly sessionGuard: SessionGuardService,
   ) {}
 
   // ======================================================================
   // 内部辅助
   // ======================================================================
-
-  /**
-   * 解析凭证（providerId 优先，否则用用户偏好中选中的厂商）
-   */
-  private async resolveCredentials(userId: number, providerId?: string): Promise<AiCredentials> {
-    const preference = await this.prisma.aiPreference.findUnique({ where: { userId } })
-    const finalProviderId = providerId || preference?.selectedProviderId
-    if (!finalProviderId) {
-      throw new BadRequestException('请先前往设置页，选择并保存要使用的 AI 服务商')
-    }
-    return this.userAiConfigService.getActiveCredentials(userId, finalProviderId)
-  }
-
-  /**
-   * 校验面试会话归属 + 状态，返回完整记录
-   */
-  private async findOwnedInterview(
-    userId: number,
-    sessionIdStr: string,
-  ): Promise<AiSession & { interviewSession: InterviewSession }> {
-    if (!/^\d+$/.test(sessionIdStr)) {
-      throw new NotFoundException('面试不存在')
-    }
-    const session = await this.prisma.aiSession.findFirst({
-      where: { id: BigInt(sessionIdStr), userId },
-      include: { interviewSession: true },
-    })
-    if (
-      !session ||
-      session.type !== 'interview' ||
-      !session.interviewSession ||
-      session.status === 'deleted'
-    ) {
-      throw new NotFoundException('面试不存在')
-    }
-    return session as AiSession & { interviewSession: InterviewSession }
-  }
 
   /**
    * 从 extra JSON 安全读取字段（Prisma Json 类型在 MySQL 中可能是对象或 null）
@@ -272,7 +237,7 @@ export class InterviewService {
       ;(async () => {
         try {
           // 1. 校验会话归属 + 状态
-          const interview = await this.findOwnedInterview(userId, sessionIdStr)
+          const interview = await this.sessionGuard.findOwnedInterview(userId, sessionIdStr)
           interviewId = interview.id
           const iSession = interview.interviewSession
           if (iSession.status === 'finished') {
@@ -282,7 +247,7 @@ export class InterviewService {
           }
 
           // 2. 解析凭证（三条路径共用）
-          const credentials = await this.resolveCredentials(
+          const credentials = await this.credentialService.resolveCredentials(
             userId,
             interview.providerId ?? undefined,
           )
@@ -741,7 +706,7 @@ export class InterviewService {
 
   /** 面试详情（含所有消息 + 评分） */
   async getInterview(userId: number, sessionIdStr: string): Promise<InterviewDetail> {
-    const interview = await this.findOwnedInterview(userId, sessionIdStr)
+    const interview = await this.sessionGuard.findOwnedInterview(userId, sessionIdStr)
     const iSession = interview.interviewSession
 
     // 按 roundIndex 读取题目/回答/评价
@@ -811,7 +776,7 @@ export class InterviewService {
 
   /** 软删除面试（标记 ai_session.status=deleted） */
   async deleteInterview(userId: number, sessionIdStr: string): Promise<{ success: true }> {
-    const interview = await this.findOwnedInterview(userId, sessionIdStr)
+    const interview = await this.sessionGuard.findOwnedInterview(userId, sessionIdStr)
     await this.prisma.aiSession.update({
       where: { id: interview.id },
       data: { status: 'deleted' },

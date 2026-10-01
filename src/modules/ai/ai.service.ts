@@ -1,7 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import OpenAI from 'openai'
-import * as crypto from 'node:crypto'
 import type { GrammarCheckDto } from './dto/grammar-check.dto'
 import type { ResumeScoreDto } from './dto/resume-score.dto'
 import type { JobMatchDto } from './dto/job-match.dto'
@@ -10,7 +8,10 @@ import type { PdfToJsonDto } from './dto/pdf-to-json.dto'
 import type { ChatStreamDto } from './dto/chat-stream.dto'
 import type { SelfIntroDto } from './dto/self-intro.dto'
 import type { AiCredentials } from '../user/user-ai-config.service'
-import { UserAiConfigService } from '../user/user-ai-config.service'
+import { AiCommonService } from '../shared/ai-common.service'
+import { CredentialService } from '../shared/credential.service'
+import { generateShortId } from '@/common/utils/short-id.util'
+import { scoreToGrade } from '@/common/utils/score.util'
 import {
   DEFAULT_MENU_SECTIONS,
   DEFAULT_PHOTO_CONFIG,
@@ -18,7 +19,6 @@ import {
   DEFAULT_TITLE_PREFIX,
   INITIAL_GLOBAL_CONFIGURATION,
 } from './constants/resume-defaults'
-import { PrismaService } from '@/prisma/prisma.service'
 
 // ==========================================================================
 // 前端 aiAPIConnect.ts 中定义的返回类型（后端原样返回给前端，保证类型一致）
@@ -86,8 +86,8 @@ export interface SseEventPayload {
 @Injectable()
 export class AiService {
   constructor(
-    private readonly userAiConfigService: UserAiConfigService,
-    private readonly prisma: PrismaService,
+    private readonly aiCommon: AiCommonService,
+    private readonly credentialService: CredentialService,
   ) {}
 
   // ======================================================================
@@ -95,60 +95,14 @@ export class AiService {
   // ======================================================================
 
   /**
-   * 根据用户 ID 解析 AI 调用凭证（委托 UserAiConfigService 读取数据库并解密）
+   * 解析用户 AI 凭证（带偏好校验）
+   * 先确认用户有偏好配置，再委托 CredentialService 解密凭证
    * @param userId 当前登录用户 ID
+   * @param providerId 可选服务商 ID，不传则用用户选中的
    * @returns 明文凭证 { apiKey, baseUrl, modelId }
    */
-  private async resolveCredentials(userId: number, providerId: string): Promise<AiCredentials> {
-    return this.userAiConfigService.getActiveCredentials(userId, providerId)
-  }
-
-  /**
-   * 根据凭证动态创建 OpenAI SDK 客户端
-   * 不启用 dangerouslyAllowBrowser（后端环境不需要）
-   * @param credentials 解密后的用户凭证
-   * @returns OpenAI 客户端
-   */
-  private createOpenAIClient(credentials: AiCredentials): OpenAI {
-    return new OpenAI({ apiKey: credentials.apiKey, baseURL: credentials.baseUrl })
-  }
-
-  /**
-   * 格式化 AI SDK 抛出的错误为可读中文消息
-   * @param error 任意错误对象
-   * @returns 已格式化的用户友好提示
-   */
-  private formatError(error: unknown): string {
-    const err = error as { message?: string; status?: number }
-    if (err?.message) return err.message
-    return '连接失败，请检查 API Key 和 API 端点是否正确。'
-  }
-
-  /**
-   * 用于错误日志打印的 API Key 掩码（仅保留前 8 位）
-   * 避免完整 Key 泄漏到日志或控制台
-   */
-  private maskKey(key: string): string {
-    if (!key || key.length <= 8) return '***'
-    return `${key.slice(0, 8)}***`
-  }
-
-  /**
-   * 把总分映射到 S/A/B/C/D 等级（同前端 scoreToGrade 逻辑）
-   */
-  private scoreToGrade(score: number): ResumeScoreResult['grade'] {
-    if (score >= 90) return 'S'
-    if (score >= 80) return 'A'
-    if (score >= 70) return 'B'
-    if (score >= 60) return 'C'
-    return 'D'
-  }
-
-  /**
-   * 生成 8 位短 ID（用于 PDF 转 JSON 后的新简历 id）
-   */
-  private generateShortId(): string {
-    return crypto.randomUUID().substring(0, 8)
+  private async resolveCredentials(userId: number, providerId?: string): Promise<AiCredentials> {
+    return this.credentialService.resolveCredentialsWithPreferenceCheck(userId, providerId)
   }
 
   // ======================================================================
@@ -164,13 +118,12 @@ export class AiService {
    */
   async testConnection(userId: number, providerId: string): Promise<{ success: true }> {
     // 按优先级解析凭证
-
-    const credentials: AiCredentials = await this.userAiConfigService.getActiveCredentials(
+    const credentials: AiCredentials = await this.credentialService.resolveCredentials(
       userId,
       providerId,
     )
 
-    const openai = this.createOpenAIClient(credentials)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     try {
       await openai.chat.completions.create({
@@ -186,8 +139,8 @@ export class AiService {
         temperature: 0,
       })
     } catch (error) {
-      console.error('[AI] 测试连接失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] 测试连接失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
 
     return { success: true }
@@ -204,19 +157,8 @@ export class AiService {
    * @returns 包含语法问题列表的对象
    */
   async checkGrammar(userId: number, dto: GrammarCheckDto): Promise<GrammarCheckResult> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-
-    const credentials: AiCredentials = await this.userAiConfigService.getActiveCredentials(
-      userId,
-      preference.selectedProviderId,
-    )
-
-    const openai = this.createOpenAIClient(credentials)
+    const credentials: AiCredentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 提示词严格同前端 aiAPIConnect.ts 第 318 行
     const systemPrompt = `你是专业的中文文案校对专家。请检查简历文本中的：错别字、语病、标点错误、中英文混用问题、冗余表达。
@@ -256,8 +198,8 @@ export class AiService {
       const issues = Array.isArray(parsed.issues) ? (parsed.issues as GrammarIssue[]) : []
       return { issues }
     } catch (error) {
-      console.error('[AI] 语法检查失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] 语法检查失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -272,14 +214,8 @@ export class AiService {
    * @param dto resumeText
    */
   async scoreResume(userId: number, dto: ResumeScoreDto): Promise<ResumeScoreResult> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 提示词严格同前端 aiAPIConnect.ts 第 411 行
     const systemPrompt = `你是资深 HR 简历审核官，请从以下 6 个维度给简历打分（每项 0-100）：
@@ -322,7 +258,7 @@ export class AiService {
       const parsed = JSON.parse(raw) as ResumeScoreResult
 
       // 兜底：防止模型缺字段
-      parsed.grade = parsed.grade || this.scoreToGrade(parsed.totalScore || 0)
+      parsed.grade = parsed.grade || scoreToGrade(parsed.totalScore || 0)
       parsed.dimensions = parsed.dimensions || []
       parsed.overallComment = parsed.overallComment || ''
       parsed.top3Issues = parsed.top3Issues || []
@@ -330,8 +266,8 @@ export class AiService {
 
       return parsed
     } catch (error) {
-      console.error('[AI] 简历评分失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] 简历评分失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -345,14 +281,8 @@ export class AiService {
    * @param dto resumeText + jobDescription
    */
   async analyzeJobMatch(userId: number, dto: JobMatchDto): Promise<JobMatchResult> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 提示词严格同前端 aiAPIConnect.ts 第 553 行（把简历文本嵌在里面）
     const systemPrompt = `你是一位资深技术招聘官，需要评估候选人简历与岗位描述（JD）的匹配度。
@@ -407,8 +337,8 @@ ${dto.resumeText}`
 
       return parsed
     } catch (error) {
-      console.error('[AI] 岗位匹配分析失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] 岗位匹配分析失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -425,15 +355,8 @@ ${dto.resumeText}`
     userId: number,
     dto: InterviewQuestionsDto,
   ): Promise<{ content: string }> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const count = dto.questionCount ?? 5
 
@@ -470,8 +393,8 @@ Q2: [问题2]
       })
       return { content: completion.choices[0]?.message?.content || '' }
     } catch (error) {
-      console.error('[AI] 生成面试问题失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] 生成面试问题失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -486,15 +409,8 @@ Q2: [问题2]
    * @param dto pdfText
    */
   async pdfToJson(userId: number, dto: PdfToJsonDto): Promise<Record<string, any>> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 提示词：嵌入 globalConfiguration 默认值和结构要求
     const prompt = `
@@ -533,7 +449,7 @@ Q2: [问题2]
 
       const parsed = JSON.parse(completion.choices[0]?.message?.content || '{}')
       // 同前端 pdfToJsonWithAI 后处理逻辑
-      const id = this.generateShortId()
+      const id = generateShortId()
       parsed.id = id
       parsed.title = parsed.title ?? `${DEFAULT_TITLE_PREFIX}${id}`
       parsed.templateId = parsed.templateId || DEFAULT_TEMPLATE_ID
@@ -549,8 +465,8 @@ Q2: [问题2]
 
       return parsed
     } catch (error) {
-      console.error('[AI] PDF 转 JSON 失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[AI] PDF 转 JSON 失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -566,15 +482,8 @@ Q2: [问题2]
    * @returns NestJS SSE 要求的 Observable<{ data: string }>，每次 data 为 JSON 字符串
    */
   async chatStream(userId: number, dto: ChatStreamDto): Promise<Observable<{ data: string }>> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     return new Observable((subscriber) => {
       ;(async () => {
@@ -604,8 +513,8 @@ Q2: [问题2]
           })
           subscriber.complete()
         } catch (error) {
-          console.error('[AI] 流式对话失败（key=%s）', this.maskKey(credentials.apiKey))
-          subscriber.error(new BadRequestException(this.formatError(error)))
+          console.error('[AI] 流式对话失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
 
@@ -626,15 +535,8 @@ Q2: [问题2]
    * @returns SSE Observable
    */
   async selfIntroStream(userId: number, dto: SelfIntroDto): Promise<Observable<{ data: string }>> {
-    const preference = await this.prisma.aiPreference.findUnique({
-      where: { userId },
-    })
-    if (!preference) {
-      throw new BadRequestException('暂无该用户偏好配置')
-    }
-
-    const credentials = await this.resolveCredentials(userId, preference.selectedProviderId)
-    const openai = this.createOpenAIClient(credentials)
+    const credentials = await this.resolveCredentials(userId)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const { scene, duration, tone } = dto.options
     const wordCount = duration * 220 // 中文语速估算
@@ -681,8 +583,8 @@ ${dto.resumeText}`
           })
           subscriber.complete()
         } catch (error) {
-          console.error('[AI] 自我介绍生成失败（key=%s）', this.maskKey(credentials.apiKey))
-          subscriber.error(new BadRequestException(this.formatError(error)))
+          console.error('[AI] 自我介绍生成失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
 

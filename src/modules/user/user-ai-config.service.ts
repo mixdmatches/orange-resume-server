@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import * as crypto from 'node:crypto'
 import { decrypt, encrypt, maskApiKey } from '@/common/utils/crypto.utils'
+import { generateShortId } from '@/common/utils/short-id.util'
 import { PrismaService } from '@/prisma/prisma.service'
 import { createAiConfigDto, MaskedManufacturer } from './dto/ai-config.dto'
 
@@ -26,14 +26,6 @@ export class UserAiConfigService {
   ) {}
 
   /**
-   * 生成 8 位短 ID（与前端策略保持一致）
-   * @returns 8 个字符长度的随机字符串
-   */
-  private generateShortId(): string {
-    return crypto.randomUUID().substring(0, 8)
-  }
-
-  /**
    * 保存用户AI配置（幂等：同用户下同 providerId 不存在则新增，已存在则覆盖更新）
    * @param userId 用户ID
    * @param config 用户AI配置
@@ -47,7 +39,7 @@ export class UserAiConfigService {
       throw new BadRequestException('API Key 不能包含 ****')
     }
     if (!config.providerId) {
-      config.providerId = this.generateShortId()
+      config.providerId = generateShortId()
     }
     await this.prisma.aiProvider.upsert({
       where: { userId_providerId: { userId, providerId: config.providerId } },

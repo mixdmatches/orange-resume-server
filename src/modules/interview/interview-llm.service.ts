@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
 import OpenAI from 'openai'
 import type { AiCredentials } from '../user/user-ai-config.service'
+import { AiCommonService } from '../shared/ai-common.service'
 
 /* ============================================================
  * 契约冻结（contract frozen）：以下接口的返回结构不得随意修改，
@@ -109,31 +110,31 @@ interface SummaryPromptContext {
  */
 @Injectable()
 export class InterviewLlmService {
+  constructor(private readonly aiCommon: AiCommonService) {}
+
   // ======================================================================
   // 内部辅助
   // ======================================================================
 
   /**
-   * 创建 OpenAI 客户端（凭证仅在内存中短期使用）
+   * 创建 OpenAI 客户端（委托 AiCommonService，凭证仅在内存中短期使用）
    */
   private createClient(credentials: AiCredentials): OpenAI {
-    return new OpenAI({ apiKey: credentials.apiKey, baseURL: credentials.baseUrl })
+    return this.aiCommon.createOpenAIClient(credentials)
   }
 
   /**
-   * 把 AI SDK 错误格式化为可读消息
+   * 把 AI SDK 错误格式化为可读消息（委托 AiCommonService）
    */
   private formatError(error: unknown): string {
-    const err = error as { message?: string }
-    return err?.message ?? 'AI 调用失败'
+    return this.aiCommon.formatError(error)
   }
 
   /**
-   * 把 API Key 掩码（仅保留前 8 位）
+   * 把 API Key 掩码（委托 AiCommonService）
    */
   private maskKey(key: string): string {
-    if (!key || key.length <= 8) return '***'
-    return `${key.slice(0, 8)}***`
+    return this.aiCommon.maskKey(key)
   }
 
   // ======================================================================

@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Header,
   HttpException,
   Param,
   Patch,
@@ -14,6 +13,7 @@ import {
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
+import { setSseHeaders } from '@/common/utils/sse.util'
 import { AiSessionService } from './ai-session.service'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
 import { CurrentUser } from '../../common/decorators/current-user.decorator'
@@ -137,9 +137,6 @@ export class AiSessionController {
   })
   @ApiBody({ type: SendMessageDto })
   @Post(':id/chat/stream')
-  @Header('Content-Type', 'text/event-stream')
-  @Header('Cache-Control', 'no-cache')
-  @Header('Connection', 'keep-alive')
   async chatStream(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
@@ -150,11 +147,7 @@ export class AiSessionController {
     const source = await this.aiSessionService.chatInSession(user.userId, id, dto)
 
     // 手动设置 SSE 响应头（与 /api/ai/chat/stream 保持一致）
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no') // 防 Nginx 反代缓冲
-    res.flushHeaders()
+    setSseHeaders(res)
 
     const subscription = source.subscribe({
       // 把 Observable 的每次发射写成标准 SSE 帧：data: xxx\n\n

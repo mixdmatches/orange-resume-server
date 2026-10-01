@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Header,
   Param,
   Post,
   Query,
@@ -12,6 +11,7 @@ import {
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
+import { setSseHeaders } from '@/common/utils/sse.util'
 import { InterviewService } from './interview.service'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
 import { CurrentUser } from '../../common/decorators/current-user.decorator'
@@ -73,9 +73,6 @@ export class InterviewController {
   })
   @ApiBody({ type: InterviewStreamDto })
   @Post(':id/stream')
-  @Header('Content-Type', 'text/event-stream')
-  @Header('Cache-Control', 'no-cache')
-  @Header('Connection', 'keep-alive')
   async interviewStream(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
@@ -84,11 +81,7 @@ export class InterviewController {
   ): Promise<void> {
     const source = this.interviewService.interviewStream(user.userId, id, dto)
 
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no')
-    res.flushHeaders()
+    setSseHeaders(res)
 
     const subscription = source.subscribe({
       next: (msg) => res.write(`data: ${msg.data}\n\n`),

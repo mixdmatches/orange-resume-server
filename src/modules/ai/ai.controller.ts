@@ -1,10 +1,11 @@
-import { Body, Controller, Header, HttpException, Post, Res, UseGuards } from '@nestjs/common'
+import { Body, Controller, HttpException, Post, Res, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
 import { AiService } from './ai.service'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
 import { CurrentUser } from '../../common/decorators/current-user.decorator'
 import type { JwtPayload } from '../../common/types/jwt-payload'
+import { setSseHeaders } from '@/common/utils/sse.util'
 import { GrammarCheckDto } from './dto/grammar-check.dto'
 import { ResumeScoreDto } from './dto/resume-score.dto'
 import { JobMatchDto } from './dto/job-match.dto'
@@ -152,9 +153,6 @@ export class AiController {
     description: '对话上下文 messages 数组（按 system/user/assistant 排序）',
   })
   @Post('chat/stream')
-  @Header('Content-Type', 'text/event-stream')
-  @Header('Cache-Control', 'no-cache')
-  @Header('Connection', 'keep-alive')
   async chatStream(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChatStreamDto,
@@ -164,11 +162,7 @@ export class AiController {
     const source = await this.aiService.chatStream(user.userId, dto)
 
     // 手动设置 SSE 响应头（@Post 不像 @Sse 会自动处理）
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no') // 防 Nginx 反代缓冲
-    res.flushHeaders()
+    setSseHeaders(res)
 
     const subscription = source.subscribe({
       // 把 Observable 的每次发射写成标准 SSE 帧：data: xxx\n\n
@@ -208,11 +202,7 @@ export class AiController {
     const source = await this.aiService.selfIntroStream(user.userId, dto)
 
     // 手动设置 SSE 响应头（@Post 不像 @Sse 会自动处理）
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.setHeader('X-Accel-Buffering', 'no') // 防 Nginx 反代缓冲
-    res.flushHeaders()
+    setSseHeaders(res)
 
     const subscription = source.subscribe({
       // 把 Observable 的每次发射写成标准 SSE 帧：data: xxx\n\n
