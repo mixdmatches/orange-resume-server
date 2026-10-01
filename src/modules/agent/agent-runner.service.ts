@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
 import OpenAI from 'openai'
-import type { AiSession } from '@prisma/client'
+import type { AiSession, Prisma } from '@prisma/client'
 import { AiService } from '../ai/ai.service'
 import { AiCommonService } from '../shared/ai-common.service'
 import { CredentialService } from '../shared/credential.service'
@@ -13,7 +13,7 @@ import {
 } from '../shared/shared.constants'
 import { PrismaService } from '@/prisma/prisma.service'
 import { ToolRegistryService } from './tool-registry.service'
-import type { AgentSseEvent, ToolCall, ToolCallDelta } from './types'
+import type { AgentSseEvent, PersistedToolCall, ToolCall, ToolCallDelta } from './types'
 
 /** Agent 最大循环轮次（防止无限工具调用导致 token 爆炸） */
 const MAX_AGENT_LOOPS = 5
@@ -116,6 +116,9 @@ export class AgentRunnerService {
       let settled = false
       const abort = new AbortController()
 
+      // 本轮工具调用记录
+      const toolCallRecords: PersistedToolCall[] = []
+
       /** 发送一帧 SSE 事件 */
       const emit = (event: AgentSseEvent): void => {
         subscriber.next({ data: JSON.stringify(event) })
@@ -131,6 +134,14 @@ export class AgentRunnerService {
               streamStatus: status,
               promptTokens,
               completionTokens,
+              // 有工具调用时持久化到 extra（Json 字段），刷新后前端据此还原工具调用卡片
+              ...(toolCallRecords.length > 0
+                ? {
+                    extra: {
+                      toolCalls: toolCallRecords,
+                    } as unknown as Prisma.InputJsonValue,
+                  }
+                : {}),
             },
           }),
           this.prisma.aiSession.update({
@@ -225,6 +236,9 @@ export class AgentRunnerService {
             for (const tc of toolCalls) {
               const args = this.safeParseArgs(tc.arguments)
               emit({ type: 'tool_call', name: tc.name, args })
+              // 同步登记持久化记录：先记 calling，执行结束后回填状态与结果
+              const record: PersistedToolCall = { name: tc.name, args, status: 'calling' }
+              toolCallRecords.push(record)
 
               try {
                 console.log('[Agent] 工具 %s 开始执行', tc.name)
@@ -236,6 +250,8 @@ export class AgentRunnerService {
                 const output = JSON.stringify(result)
                 console.log('[Agent] 工具 %s 执行完成', tc.name)
                 emit({ type: 'tool_result', name: tc.name, output })
+                record.status = 'done'
+                record.output = output
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
@@ -245,6 +261,8 @@ export class AgentRunnerService {
                 // 工具执行失败：把错误信息回喂给 LLM，让它决定是否重试或换方案
                 const errorMsg = (err as Error)?.message || '工具执行失败'
                 emit({ type: 'tool_result', name: tc.name, output: `错误: ${errorMsg}` })
+                record.status = 'error'
+                record.output = `错误: ${errorMsg}`
                 messages.push({
                   role: 'tool',
                   tool_call_id: tc.id,

@@ -81,3 +81,17 @@ export interface ToolCall {
   name: string
   arguments: string
 }
+
+/**
+ * 工具调用持久化记录
+ */
+export interface PersistedToolCall {
+  /** 工具名称 */
+  name: string
+  /** 工具入参（safeParseArgs 解析后的对象） */
+  args: Record<string, unknown>
+  /** 执行状态：calling 执行中被中断 / done 完成 / error 出错 */
+  status: 'calling' | 'done' | 'error'
+  /** 工具返回结果（JSON 字符串），calling 状态下可能缺失 */
+  output?: string
+}
