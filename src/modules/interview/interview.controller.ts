@@ -1,14 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Query,
-  Res,
-  UseGuards,
-} from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
 import { setSseHeaders } from '@/common/utils/sse.util'
@@ -103,8 +93,8 @@ export class InterviewController {
   @Get()
   async list(
     @CurrentUser() user: JwtPayload,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
+    @Query('page') page: string,
+    @Query('pageSize') pageSize: string,
   ) {
     return this.interviewService.listInterviews(
       user.userId,

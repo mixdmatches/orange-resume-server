@@ -676,8 +676,8 @@ export class InterviewService {
   /** 面试列表（offset 分页，按最近活跃倒序，排除已删除） */
   async listInterviews(
     userId: number,
-    page = 1,
-    pageSize = 20,
+    page: number,
+    pageSize: number,
   ): Promise<{ list: Record<string, unknown>[]; total: number; page: number; pageSize: number }> {
     const where: Prisma.AiSessionWhereInput = {
       userId,
