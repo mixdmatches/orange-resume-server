@@ -240,6 +240,9 @@ model AiSessionMessage {
   completionTokens Int          @default(0) @map("completion_tokens")
   /// 扩展数据（面试题难度、评分、引用的简历片段等结构化信息）
   extra            Json?
+  /// Agent 工具调用记录列表（仅 chat 会话的 assistant 消息有值，其他消息为 null）
+  /// 与 extra 独立，语义明确，避免不同业务的结构化数据混在同一个 Json 字段
+  toolCalls        Json?        @map("tool_calls")
   /// 流式写入状态：streaming / done / failed（流式响应落库的中间态标记）
   streamStatus     StreamStatus @default(done) @map("stream_status")
   /// 创建时间（消息不可变，只写不改，无更新时间）

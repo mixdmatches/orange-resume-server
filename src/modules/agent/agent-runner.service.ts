@@ -134,12 +134,10 @@ export class AgentRunnerService {
               streamStatus: status,
               promptTokens,
               completionTokens,
-              // 有工具调用时持久化到 extra（Json 字段），刷新后前端据此还原工具调用卡片
+              // 有工具调用时持久化到独立 toolCalls 字段，刷新后前端据此还原工具调用卡片
               ...(toolCallRecords.length > 0
                 ? {
-                    extra: {
-                      toolCalls: toolCallRecords,
-                    } as unknown as Prisma.InputJsonValue,
+                    toolCalls: toolCallRecords as unknown as Prisma.InputJsonValue,
                   }
                 : {}),
             },

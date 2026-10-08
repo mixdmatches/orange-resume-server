@@ -496,6 +496,7 @@ export class AiSessionService {
       promptTokens: message.promptTokens,
       completionTokens: message.completionTokens,
       extra: message.extra,
+      toolCalls: message.toolCalls,
       streamStatus: message.streamStatus,
       createdAt: message.createdAt,
     }
