@@ -5,6 +5,7 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator'
 import type { JwtPayload } from '@/common/types/jwt-payload'
 import { UserAiConfigService } from './user-ai-config.service'
 import { createAiConfigDto } from './dto/ai-config.dto'
+import { UserService } from '@/modules/user/user.service'
 
 /**
  * 用户控制器
@@ -16,7 +17,23 @@ import { createAiConfigDto } from './dto/ai-config.dto'
 @UseGuards(JwtAuthGuard)
 @Controller('user')
 export class UserController {
-  constructor(private readonly userAiConfigService: UserAiConfigService) {}
+  constructor(
+    private readonly userAiConfigService: UserAiConfigService,
+    private readonly userService: UserService,
+  ) {}
+
+  /**
+   * 注销用户账号
+   */
+  @Post('delete')
+  @ApiOperation({
+    summary:
+      '注销用户账号（含所有关联数据），并清除本地 Token。注意：注销后用户无法登录，需重新注册。',
+  })
+  @Post('delete')
+  async deleteAccount(@CurrentUser() user: JwtPayload) {
+    await this.userService.deleteAccount(user.userId)
+  }
 
   /**
    * 新增用户 AI 配置

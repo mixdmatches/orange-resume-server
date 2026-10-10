@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport'
 import { ExtractJwt, Strategy } from 'passport-jwt'
 import { ConfigService } from '@nestjs/config'
 import type { JwtPayload, JwtTokenType } from '../../../common/types/jwt-payload'
+import { UserService } from '@/modules/user/user.service'
 
 /**
  * Passport JWT 策略
@@ -16,7 +17,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
    * 构造函数，通过 ConfigService 读取 JWT 配置
    * @param configService Nest 全局配置服务，提供 .env 中的变量
    */
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly userService: UserService,
+  ) {
     super({
       // 从 Authorization Header 中按 Bearer 方案提取 Token
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -44,6 +48,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (payload.type === 'refresh') {
       throw new UnauthorizedException('无效的令牌类型')
     }
+
+    await this.userService.findById(payload.userId).catch(() => new UnauthorizedException('用户不存在或已被删除'))
+
     return {
       userId: payload.userId,
       username: payload.username,

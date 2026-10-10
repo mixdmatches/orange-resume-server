@@ -142,4 +142,17 @@ export class UserService {
     }
     return user
   }
+
+  /**
+   * 注销用户账号（含所有关联数据），并清除本地 Token
+   *
+   * @param userId 用户 ID
+   */
+  async deleteAccount(userId: number): Promise<void> {
+    await this.prisma.user.delete({
+      where: { id: userId },
+    })
+    // 废除token
+    
+  }
 }
