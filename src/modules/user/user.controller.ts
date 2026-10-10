@@ -25,7 +25,6 @@ export class UserController {
   /**
    * 注销用户账号
    */
-  @Post('delete')
   @ApiOperation({
     summary:
       '注销用户账号（含所有关联数据），并清除本地 Token。注意：注销后用户无法登录，需重新注册。',
