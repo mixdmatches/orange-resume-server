@@ -41,6 +41,8 @@ interface SessionSseEventPayload {
 export interface SerializedSession {
   /** 会话 ID（BigInt 序列化为字符串） */
   id: string
+  /** 简历id */
+  resumeId: string
   /** 所属用户 ID */
   userId: number
   /** 会话类型：interview = AI 面试 / chat = AI 对话 */
@@ -116,6 +118,7 @@ export class AiSessionService {
   async createSession(userId: number, dto: CreateSessionDto): Promise<SerializedSession> {
     const session = await this.prisma.aiSession.create({
       data: {
+        resumeId: dto.resumeId,
         userId,
         type: dto.type,
         title: dto.title?.trim() || DEFAULT_SESSION_TITLE,
@@ -137,6 +140,7 @@ export class AiSessionService {
   ): Promise<{ list: SerializedSession[]; total: number; page: number; pageSize: number }> {
     const where: Prisma.AiSessionWhereInput = {
       userId,
+      resumeId: dto.resumeId,
       status: { not: 'deleted' },
       ...(dto.type ? { type: dto.type } : {}),
     }
@@ -162,9 +166,9 @@ export class AiSessionService {
    * 查询当前用户的全部会话(chat 类型)（按最近活跃倒序，排除已软删除）
    * @param userId 当前登录用户 ID
    */
-  async listAllChatSessions(userId: number): Promise<SerializedSession[]> {
+  async listAllChatSessions(userId: number, resumeId: string): Promise<SerializedSession[]> {
     const sessions = await this.prisma.aiSession.findMany({
-      where: { userId, status: { not: 'deleted' }, type: 'chat' },
+      where: { userId, resumeId, status: { not: 'deleted' }, type: 'chat' },
       include: { _count: { select: { messages: true } } },
       orderBy: { updatedAt: 'desc' },
     })
@@ -457,6 +461,7 @@ export class AiSessionService {
   ): SerializedSession {
     return {
       id: String(session.id),
+      resumeId: session.resumeId,
       userId: session.userId,
       type: session.type,
       title: session.title,

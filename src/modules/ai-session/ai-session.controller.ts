@@ -67,9 +67,9 @@ export class AiSessionController {
    */
   @ApiOperation({ summary: '查询当前用户的全部会话(chat 类型)（分页，按最近活跃倒序）' })
   @ApiResponse({ status: 200, description: '返回 { list, total, page, pageSize }' })
-  @Get('chat')
-  async listChatSessions(@CurrentUser() user: JwtPayload) {
-    return this.aiSessionService.listAllChatSessions(user.userId)
+  @Get('chat/:id')
+  async listChatSessions(@CurrentUser() user: JwtPayload, @Param('id') resumeId: string) {
+    return this.aiSessionService.listAllChatSessions(user.userId, resumeId)
   }
 
   /**

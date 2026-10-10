@@ -2,6 +2,9 @@ import { IsEnum, IsOptional, IsString, Length, MaxLength } from 'class-validator
 
 /** 创建会话 DTO */
 export class CreateSessionDto {
+  @IsString({ message: 'resumeId必须为字符串' })
+  resumeId!: string
+
   /** 会话类型：暂时只开放对话类型（面试会话由后续面试流程接口创建） */
   @IsEnum(['chat'], { message: 'type 暂时只支持 chat' })
   type!: 'chat'

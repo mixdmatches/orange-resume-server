@@ -172,6 +172,7 @@ export class InterviewService {
           title,
           providerId: dto.providerId,
           modelId: dto.modelId,
+          resumeId: dto.resumeId,
         },
       })
       const interviewSession = await tx.interviewSession.create({
@@ -694,10 +695,20 @@ export class InterviewService {
       }),
       this.prisma.aiSession.count({ where }),
     ])
+
+    if (rows.length == 0) {
+      return {
+        list: [],
+        total,
+        page,
+        pageSize,
+      }
+    }
+    const serializeList = rows.map((row) =>
+      this.serializeInterviewSession(row as AiSession & { interviewSession: InterviewSession }),
+    )
     return {
-      list: rows.map((row) =>
-        this.serializeInterviewSession(row as AiSession & { interviewSession: InterviewSession }),
-      ),
+      list: serializeList,
       total,
       page,
       pageSize,

@@ -67,6 +67,8 @@ model Resume {
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// 一对多关联：使用该简历的 AI 面试会话
   interviewSessions InterviewSession[]
+  /// 一对多关联：引用该简历的 AI 会话（面试场景写入，简历删除时级联删除）
+  aiSessions        AiSession[]
 
   /// 索引：按 userId 加速查询用户的全部简历
   @@index([userId])
@@ -164,6 +166,8 @@ model AiSession {
   providerId String?       @map("provider_id") @db.VarChar(64)
   /// 当时使用的模型 ID（软引用，同上）
   modelId    String?       @map("model_id") @db.VarChar(128)
+  /// 关联的简历 ID
+  resumeId   String?       @map("resume_id") @db.VarChar(10)
   /// 会话状态：active 进行中 / archived 已归档 / deleted 已删除（软删除）
   status     SessionStatus @default(active)
   /// 创建时间
@@ -173,6 +177,8 @@ model AiSession {
 
   /// 与 User 表的关联关系：N : 1，级联删除
   user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 与 Resume 表的关联关系：N : 1，级联删除（简历删除则关联的面试会话连同消息一起被数据库级联清理）
+  resume           Resume?            @relation(fields: [resumeId], references: [id], onDelete: Cascade)
   /// 一对多关联：会话下的所有消息
   messages         AiSessionMessage[]
   /// 一对一关联：面试会话的扩展信息（仅 type = interview 时存在）
@@ -182,6 +188,8 @@ model AiSession {
   @@index([userId, type, updatedAt(sort: Desc)], map: "idx_user_type_updated")
   /// 索引：按用户 + 状态筛选
   @@index([userId, status], map: "idx_user_status")
+  /// 索引：按简历查关联的面试会话 + 支撑简历删除时的级联删除
+  @@index([resumeId], map: "idx_ai_session_resume")
   /// 数据库表名映射为设计文档中的 snake_case 命名
   @@map("ai_session")
 }
