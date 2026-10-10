@@ -60,12 +60,7 @@ export class UserService {
       if (existUser.username === username) {
         throw new ConflictException('用户名已存在')
       }
-      // 直接复用 HttpStatus CONFLICT 对应的错误消息映射（Filter 会映射到 BAD_REQUEST 40001）
-      // 但此处需要 40003，所以自定义 message，Filter 中 409 默认走 40001 不满足，
-      // 因此改用 BadRequestException + 特殊 code 标记，或在 Filter 中检测 message。
-      // 简单方案：抛 ForbiddenException 不行；自定义抛 BadRequestException 并在 message 里标记，
-      // 但最可靠的做法：用自定义错误 class。MVP 阶段简化为：直接抛带 message='用户名已存在' 的 ConflictException，
-      // 然后在 Filter 中 409 全部映射到 USER_ALREADY_EXISTS (40003) —— 已在 Filter 修改默认 40001 改为 40003（见下）
+
       throw new ConflictException('邮箱已注册')
     }
 
@@ -152,7 +147,5 @@ export class UserService {
     await this.prisma.user.delete({
       where: { id: userId },
     })
-    // 废除token
-    
   }
 }

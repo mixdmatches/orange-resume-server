@@ -56,7 +56,7 @@ export class RegisterDto {
   })
   @IsNotEmpty({ message: '用户名不能为空' })
   @IsString({ message: '用户名必须为字符串' })
-  @Length(4, 20, { message: '用户名长度必须为 4-20 位' })
+  @Length(3, 20, { message: '用户名长度必须为 3-20 位' })
   @Matches(/^[A-Za-z0-9_]+$/, { message: '用户名只能包含字母、数字、下划线' })
   username!: string
 
