@@ -3,12 +3,6 @@ import type { JwtPayload } from '../types/jwt-payload'
 
 /**
  * 获取当前登录用户信息的参数装饰器
- * 配合 @UseGuards(JwtAuthGuard) 使用，直接从 request.user 中取到 JwtPayload
- *
- * 使用示例：
- * @Get('profile')
- * @UseGuards(JwtAuthGuard)
- * getProfile(@CurrentUser() user: JwtPayload) { ... }
  *
  * @param data 装饰器参数（未使用）
  * @param ctx 执行上下文

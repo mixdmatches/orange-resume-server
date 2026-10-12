@@ -72,7 +72,7 @@ export class UserAiConfigService {
   /**
    * 读取所有厂商用户AI配置
    * @param userId 用户ID
-   * @returns 用户AI配置（apiKey 已脱敏）
+   * @returns 用户AI配置
    */
   async getAiConfig(userId: number): Promise<MaskedManufacturer[]> {
     const rows = await this.prisma.aiProvider.findMany({
@@ -112,8 +112,6 @@ export class UserAiConfigService {
 
   /**
    * 获取用户选中模型和润色提示词
-   * @param userId 用户ID
-   * @returns 用户选中模型和润色提示词
    */
   async getSelModelAndPrompt(
     userId: number,
@@ -129,10 +127,6 @@ export class UserAiConfigService {
 
   /**
    * 更新用户选中模型和润色提示词
-   * 使用 upsert 保证幂等：偏好行不存在时自动创建（update 遇不到行会抛 P2025 导致 500）
-   * @param userId 用户ID
-   * @param selectedProviderId 选中模型ID（可传 null 表示取消选中）
-   * @param polishPrompt 润色提示词
    */
   async updateSelModelAndPrompt(
     userId: number,
@@ -155,10 +149,6 @@ export class UserAiConfigService {
 
   /**
    * 获取当前生效的 AI 调用凭证（供 AI 代理模块转发请求使用）
-   * @param userId 用户ID
-   * @param providerId 指定的服务商ID（可选，不传则用用户当前选中的）
-   * @returns 解密后的调用凭证 { apiKey, baseUrl, modelId }
-   * @throws BadRequestException 未选择配置 / 配置不存在 / 配置不完整 / 解密失败
    */
   async getActiveCredentials(userId: number, providerId: string): Promise<AiCredentials> {
     const row = await this.prisma.aiProvider.findUnique({

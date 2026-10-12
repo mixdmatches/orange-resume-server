@@ -4,11 +4,6 @@ import OpenAI from 'openai'
 import type { AiCredentials } from '../user/user-ai-config.service'
 import { AiCommonService } from '../shared/ai-common.service'
 
-/* ============================================================
- * 契约冻结（contract frozen）：以下接口的返回结构不得随意修改，
- * 前后端 + DB 三方对齐，所有字段必须提供缺省值
- * ============================================================ */
-
 /** 单题评价结果（JSON 输出契约） */
 export interface QuestionEvaluation {
   /** 本题得分（0-100） */
@@ -102,44 +97,12 @@ interface SummaryPromptContext {
 
 /**
  * 面试 LLM 封装服务
- *
  * 核心职责：把 OpenAI SDK 适配到面试业务的提示词 + JSON 契约 + 流式输出
  * 所有方法都是"纯粹的 LLM 调用"——不碰 DB、不做状态机，由 interview.service 编排调用
- *
- * 动态出题模式：不预生成题库，每轮根据简历 + 历史问答现场流式生成下一题（支持追问）
  */
 @Injectable()
 export class InterviewLlmService {
   constructor(private readonly aiCommon: AiCommonService) {}
-
-  // ======================================================================
-  // 内部辅助
-  // ======================================================================
-
-  /**
-   * 创建 OpenAI 客户端（委托 AiCommonService，凭证仅在内存中短期使用）
-   */
-  private createClient(credentials: AiCredentials): OpenAI {
-    return this.aiCommon.createOpenAIClient(credentials)
-  }
-
-  /**
-   * 把 AI SDK 错误格式化为可读消息（委托 AiCommonService）
-   */
-  private formatError(error: unknown): string {
-    return this.aiCommon.formatError(error)
-  }
-
-  /**
-   * 把 API Key 掩码（委托 AiCommonService）
-   */
-  private maskKey(key: string): string {
-    return this.aiCommon.maskKey(key)
-  }
-
-  // ======================================================================
-  // 1. 流式出题（每轮动态生成，支持追问）
-  // ======================================================================
 
   /**
    * 流式生成第 roundIndex 轮的面试题
@@ -148,7 +111,7 @@ export class InterviewLlmService {
    * 输出为纯文本问题（流式 token），无 JSON 结构
    */
   streamQuestion(ctx: QuestionPromptContext, credentials: AiCredentials): LlmStreamHandle {
-    const openai = this.createClient(credentials)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
@@ -230,13 +193,8 @@ ${
           }
           subscriber.complete()
         } catch (error) {
-          console.error(
-            '[InterviewLlm] 流式出题失败（key=%s, round=%d）',
-            this.maskKey(credentials.apiKey),
-            ctx.roundIndex,
-            error,
-          )
-          subscriber.error(new BadRequestException(this.formatError(error)))
+          console.error('[InterviewLlm] 流式出题失败（key=%s, round=%d）', ctx.roundIndex, error)
+          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
       return () => {}
@@ -248,10 +206,6 @@ ${
     }
   }
 
-  // ======================================================================
-  // 2. 单题评价（非流式，JSON 模式）
-  // ======================================================================
-
   /**
    * 对用户的单题回答进行评分 + 反馈
    * 动态出题模式没有预生成的参考答案，由 LLM 基于问题本身直接评判
@@ -260,7 +214,7 @@ ${
     ctx: EvaluationPromptContext,
     credentials: AiCredentials,
   ): Promise<{ evaluation: QuestionEvaluation; usage: LlmUsage }> {
-    const openai = this.createClient(credentials)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const jdHint = ctx.jobDescription
       ? `\n\n**岗位描述**（评价时需参考候选人回答与岗位要求的匹配度）：\n${ctx.jobDescription}`
@@ -344,10 +298,6 @@ ${
     }
   }
 
-  // ======================================================================
-  // 3. 面试总结评分（非流式 JSON）+ 流式总结文本
-  // ======================================================================
-
   /**
    * 生成结构化总结评分（非流式 JSON，用于回填 interview_session.total_score + score_detail）
    * 同时返回基于评分拼接的自然语言总结文本（作为流式总结失败时的兜底）
@@ -356,7 +306,7 @@ ${
     ctx: SummaryPromptContext,
     credentials: AiCredentials,
   ): Promise<{ scoreDetail: InterviewScoreDetail; summaryText: string; usage: LlmUsage }> {
-    const openai = this.createClient(credentials)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
@@ -462,8 +412,8 @@ ${
 
       return { scoreDetail, summaryText, usage }
     } catch (error) {
-      console.error('[InterviewLlm] 总结生成失败（key=%s）', this.maskKey(credentials.apiKey))
-      throw new BadRequestException(this.formatError(error))
+      console.error('[InterviewLlm] 总结生成失败（key=%s）')
+      throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
@@ -472,7 +422,7 @@ ${
    * 返回 LlmStreamHandle：订阅 observable 拿 content 增量，流结束后 getUsage() 拿 token
    */
   streamSummaryText(ctx: SummaryPromptContext, credentials: AiCredentials): LlmStreamHandle {
-    const openai = this.createClient(credentials)
+    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
@@ -538,7 +488,7 @@ ${
           subscriber.complete()
         } catch (error) {
           console.error('[InterviewLlm] 流式总结失败', error)
-          subscriber.error(new BadRequestException(this.formatError(error)))
+          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
       return () => {}
@@ -549,10 +499,6 @@ ${
       getUsage: () => ({ promptTokens, completionTokens }),
     }
   }
-
-  // ======================================================================
-  // 辅助：把结构化评分拼成自然语言总结（流式总结失败时的兜底）
-  // ======================================================================
 
   /**
    * 兜底总结文本

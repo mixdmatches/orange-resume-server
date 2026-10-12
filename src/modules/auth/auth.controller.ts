@@ -10,7 +10,6 @@ import type { JwtPayload } from '../../common/types/jwt-payload'
 
 /**
  * 认证相关路由控制器
- * 路由前缀：auth（配合全局 setGlobalPrefix('api') → /api/auth/*）
  */
 @ApiTags('🔐 认证 Auth')
 @Controller('auth')

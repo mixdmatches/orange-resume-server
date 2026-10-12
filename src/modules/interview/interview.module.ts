@@ -7,9 +7,6 @@ import { SharedModule } from '../shared/shared.module'
 
 /**
  * AI 面试模块
- * 提供面试全生命周期：创建 → 生成题库 → 逐题答题（评价流式）→ 总结评分
- * 复用 UserModule 的 UserAiConfigService（凭证解析），PrismaService 全局注入
- * 复用 SharedModule 的 CredentialService、SessionGuardService、AiCommonService
  */
 @Module({
   imports: [UserModule, SharedModule],

@@ -87,15 +87,6 @@ export interface SerializedInterviewSession {
 
 /**
  * AI 会话服务
- *
- * 职责（编排层，LLM 调用细节仍复用 OpenAI SDK 直连）：
- * 1. 会话 CRUD：创建（暂仅 chat 类型）、列表（offset 分页）、详情、重命名/归档、软删除
- * 2. 消息查询：按会话游标分页（id 单调递增，(session_id, id) 索引覆盖）
- * 3. 流式对话落库：用户消息即时落库 → 读最近历史组装上下文 → assistant 占位消息
- *    （stream_status=streaming）→ 流式转发给前端 → 完成后回填全文 + token 用量
- * 4. token 统计：优先 stream_options.include_usage；部分厂商不支持时自动降级重试
- *
- * 注意：所有响应中的 BigInt id 一律转为字符串返回，避免 JSON.stringify 抛 TypeError
  */
 @Injectable()
 export class AiSessionService {
@@ -105,10 +96,6 @@ export class AiSessionService {
     private readonly credentialService: CredentialService,
     private readonly sessionGuard: SessionGuardService,
   ) {}
-
-  // ======================================================================
-  // 1. 会话 CRUD
-  // ======================================================================
 
   /**
    * 创建会话（当前仅支持 chat 类型；面试会话由后续面试流程接口创建）
@@ -224,10 +211,6 @@ export class AiSessionService {
     return { success: true }
   }
 
-  // ======================================================================
-  // 2. 消息查询（游标分页）
-  // ======================================================================
-
   /**
    * 按游标分页拉取会话消息（id 倒序，最新在前；前端按需反转展示）
    * 走 (session_id, id) 复合索引，WHERE id < beforeId 实现 stable 游标翻页
@@ -264,10 +247,6 @@ export class AiSessionService {
       nextCursor: hasMore ? String(page[page.length - 1].id) : null,
     }
   }
-
-  // ======================================================================
-  // 3. 会话内流式对话（SSE + 落库）
-  // ======================================================================
 
   /**
    * 会话内流式对话：先落库用户消息，再流式调用 LLM 并把 AI 回复全文 + token 用量回填
@@ -444,10 +423,6 @@ export class AiSessionService {
       }
     })
   }
-
-  // ======================================================================
-  // 内部辅助方法
-  // ======================================================================
 
   /**
    * 序列化会话记录：BigInt → string，保证可安全 JSON.stringify

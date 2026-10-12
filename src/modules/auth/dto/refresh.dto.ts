@@ -3,7 +3,6 @@ import { ApiProperty } from '@nestjs/swagger'
 
 /**
  * 刷新令牌 DTO
- * POST /api/auth/refresh 的请求体结构：只需携带 refreshToken
  */
 export class RefreshTokenDto {
   /**

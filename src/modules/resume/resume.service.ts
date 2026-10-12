@@ -28,17 +28,9 @@ export interface ResumeListResult {
   total: number
 }
 
-/**
- * 简历模块 Service
- * 负责所有简历相关的 CRUD 业务逻辑，包含严格的所有权校验（防止水平越权）
- */
 @Injectable()
 export class ResumeService {
   constructor(private readonly prisma: PrismaService) {}
-
-  // ==================================================================
-  // 内部辅助方法
-  // ==================================================================
 
   /**
    * 根据 ID 读取简历记录，内部统一处理「不存在 / 无权限」
@@ -46,9 +38,6 @@ export class ResumeService {
    * @param userId 当前登录用户 ID
    * @param resumeId 目标简历 ID
    * @param allowSkipOwnerCheck 特殊场景（目前无）跳过所有权校验
-   * @returns Prisma Resume 记录（含 content）
-   * @throws NotFoundException (40401)  ID 不存在
-   * @throws ForbiddenException (40301)  userId 不匹配
    */
   private async getResumeWithOwnerCheck(userId: number, resumeId: string) {
     const resume = await this.prisma.resume.findUnique({
@@ -63,16 +52,10 @@ export class ResumeService {
     return resume
   }
 
-  // ==================================================================
-  // 对外业务方法
-  // ==================================================================
-
   /**
    * 创建一份新的简历，归属到指定用户
-   *
    * @param userId 当前登录用户 ID
    * @param dto 创建参数（含 templateId、title、content）
-   * @returns 新简历 id
    */
   async createResume(userId: number, dto: CreateResumeDto): Promise<{ id: string }> {
     const id = dto.id || generateShortId()
@@ -92,8 +75,6 @@ export class ResumeService {
 
   /**
    * 获取当前登录用户的简历列表（按更新时间倒序）
-   * 只返回摘要字段，不返回 content 内容，节省带宽
-   *
    * @param userId 当前登录用户 ID
    * @returns { list: ResumeSummary[], total: number }
    */
@@ -128,17 +109,14 @@ export class ResumeService {
 
   /**
    * 获取单份简历的完整详情（含平铺的 Resume 结构）
-   * 流程：查库 → 校验所有权 → content JSON + 数据库列合并 → 返回
    *
    * @param userId 当前登录用户 ID
    * @param resumeId 目标简历 ID
-   * @returns 与前端 Resume 类型完全一致的对象（含 basic/educations/...）
+   * @returns 与前端 Resume 类型完全一致的对象
    */
   async getResumeDetail(userId: number, resumeId: string): Promise<Record<string, any>> {
     const resume = await this.getResumeWithOwnerCheck(userId, resumeId)
 
-    // content 存储的是前端 Resume 对象的 JSON（可能存在 id/title 不同步的情况）
-    // 因此以数据库列为准覆盖关键字段，然后合并返回
     const content = (resume.content ?? {}) as Record<string, any>
 
     const merged: Record<string, any> = {
@@ -237,7 +215,6 @@ export class ResumeService {
         templateId: source.templateId,
         title: newTitle,
         content: contentCopy as any,
-        // createdAt / updatedAt 用默认值（当前时间）
       },
     })
 

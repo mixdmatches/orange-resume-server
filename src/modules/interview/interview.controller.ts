@@ -11,12 +11,6 @@ import { InterviewStreamDto } from './dto/interview-stream.dto'
 
 /**
  * AI 面试控制器
- * 路由前缀：interviews（/api/interviews/*）
- * 提供面试流程全生命周期：创建 → 统一 SSE 流（开始 / 答题 / 提前结束，按状态路由）
- * 所有接口必须登录（JWT 守卫），且只能操作自己的面试会话（服务层校验归属）
- *
- * 与 /api/ai-sessions 的关系：面试会话底层复用 ai_session + ai_session_message，
- * 但业务路由独立——面试有专属的 stream 统一流程，不复用 chat 接口
  */
 @ApiTags('🎯 AI 面试 AI-Interview')
 @ApiBearerAuth('bearer')
@@ -28,7 +22,6 @@ export class InterviewController {
   /**
    * 创建面试会话
    * POST /api/interviews
-   * 双写 ai_session(type=interview) + interview_session(status=pending_questions)
    */
   @ApiOperation({ summary: '创建面试会话（状态：待开始）' })
   @ApiBody({ type: CreateInterviewDto })
@@ -39,27 +32,9 @@ export class InterviewController {
 
   /**
    * 面试统一 SSE 流（唯一写入口）
-   * POST /api/interviews/:id/stream
-   * 行为由 interview_session.status 决定，前端无需区分调用哪个接口：
-   * - pending_questions → 开始面试：question_start → question*（流式出题）→ question_done
-   * - in_progress + content → 答题：落库回答后直接流式出下一题（hasNext）/ 或进入总结
-   * - in_progress + finishOnly=true → 提前结束：直接进入总结
-   * - finished → error 事件
-   *
-   * 单题评价完全不在 SSE 流中推送：面试结束后后端静默批量评价并落库，
-   * 前端在 GET 面试详情时可查看所有题目的评价结果。
-   * SSE 只负责：出题 + 总结（summary_start → summary* → done）。
    */
   @ApiOperation({
     summary: '（SSE 流式）面试统一入口：开始 / 答题 / 提前结束',
-    description:
-      '唯一写入口，行为由面试状态自动路由：\n' +
-      '① 未开始 → 动态流式出第一题（question_start → question* → question_done）；\n' +
-      '② 进行中传 content → 落库回答后直接流式出下一题（追问式），轮次用尽后自动进入总结；\n' +
-      '③ 进行中传 finishOnly=true → 提前结束直接进入总结。\n\n' +
-      '**评价策略**：SSE 流中不推送任何评价事件。所有题目答完后，后端静默批量评价每道题（落库供详情页查询），然后生成流式总结文本。前端通过 GET 面试详情接口查看单题评价。\n\n' +
-      'SSE 事件序列：出题阶段 question_start → question* → question_done；总结阶段 summary_start → summary* → done。\n\n' +
-      '收到 done 事件表示面试结束，请停止再调用。',
   })
   @ApiBody({ type: InterviewStreamDto })
   @Post(':id/stream')

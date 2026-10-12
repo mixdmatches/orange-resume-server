@@ -26,10 +26,6 @@ import { SendMessageDto } from './dto/send-message.dto'
 
 /**
  * AI 会话控制器
- * 路由前缀：ai-sessions（/api/ai-sessions/*）
- * 提供有状态的 AI 对话能力：会话 CRUD + 消息游标分页 + 会话内流式对话（落库）
- * 与无状态的 /api/ai/* 代理接口互补：会话类接口由后端负责消息持久化
- * 所有接口必须登录（JWT 守卫），且只能访问自己的会话（服务层校验归属）
  */
 @ApiTags('💬 AI 会话 AI-Session')
 @ApiBearerAuth('bearer')
@@ -132,8 +128,6 @@ export class AiSessionController {
    */
   @ApiOperation({
     summary: '（SSE 流式）会话内对话',
-    description:
-      '与 /api/ai/chat/stream 的区别：本接口由后端负责消息持久化——用户消息即时落库，AI 回复流式返回并回填全文与 token 用量。前端只需传 content，无需携带历史 messages。⚠️ Swagger UI 无法实时显示 SSE 推送，请用 curl -N 或前端测试。',
   })
   @ApiBody({ type: SendMessageDto })
   @Post(':id/chat/stream')

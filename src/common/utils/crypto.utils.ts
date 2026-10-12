@@ -4,12 +4,6 @@ import { ConfigService } from '@nestjs/config'
 /**
  * AI 配置加密工具
  * 使用 AES-256-GCM 对称加密算法，保护用户 API Key 等敏感信息
- *
- * 密文存储格式（全程二进制，无字符串编码往返）：
- *   iv(12 字节) ‖ authTag(16 字节) ‖ ciphertext(N 字节)
- * - iv: 12 字节随机初始化向量（每次加密不同）
- * - authTag: 16 字节认证标签（GCM 模式特有，防篡改）
- * - ciphertext: 加密后的密文（与明文等长）
  */
 
 /** IV 长度：GCM 推荐使用 12 字节 */
@@ -37,9 +31,6 @@ function getKey(configService: ConfigService): Buffer {
  * @param plaintext 明文
  * @param configService NestJS ConfigService
  * @returns 二进制密文，布局：iv(12 字节) ‖ authTag(16 字节) ‖ ciphertext
- * @returns 类型说明：返回 Uint8Array<ArrayBuffer> 而非 Buffer，
- *          因为 Prisma Bytes 生成类型为 Uint8Array<ArrayBuffer>（TS 5.7+ 泛型化），
- *          Buffer（= Uint8Array<ArrayBufferLike>）无法直接赋值，会报 ts(2322)
  */
 export function encrypt(plaintext: string, configService: ConfigService): Uint8Array<ArrayBuffer> {
   const key = getKey(configService)
@@ -49,8 +40,6 @@ export function encrypt(plaintext: string, configService: ConfigService): Uint8A
   const authTag = cipher.getAuthTag()
   // 按固定偏移拼接三段，解密时按同样偏移切分
   const packed = Buffer.concat([iv, authTag, ciphertext])
-  // new Uint8Array(ArrayLike) 会复制数据并返回底层为普通 ArrayBuffer 的精确类型，
-  // 满足 Prisma Bytes 的类型要求（密文仅几十字节，拷贝开销可忽略）
   return new Uint8Array(packed)
 }
 

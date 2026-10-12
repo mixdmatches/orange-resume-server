@@ -9,14 +9,6 @@ import { setSseHeaders } from '@/common/utils/sse.util'
 import { AgentChatDto } from './dto/agent-chat.dto'
 import { PrismaService } from '@/prisma/prisma.service'
 
-/**
- * Agent 控制器
- * 路由前缀：agent（/api/agent/*）
- * 提供支持 Function Calling 的 Agent 对话能力：
- * - LLM 自主决定调用什么工具（评分/语法检查/岗位匹配）
- * - SSE 流式返回文本增量 + 工具调用状态事件
- * 与 /api/ai-sessions/:id/chat/stream 的区别：本接口走 Agent 控制回路，支持多轮工具调用
- */
 @ApiTags('🧠 Agent 智能体')
 @ApiBearerAuth('bearer')
 @Controller('agent')

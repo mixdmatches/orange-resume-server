@@ -7,11 +7,6 @@ import { UserAiConfigService } from './user-ai-config.service'
 import { createAiConfigDto } from './dto/ai-config.dto'
 import { UserService } from '@/modules/user/user.service'
 
-/**
- * 用户控制器
- * 路由前缀：user（/api/user/*）
- * 所有接口均需登录（JWT 守卫），通过 @CurrentUser() 获取当前用户身份
- */
 @ApiTags('👤 用户 User')
 @ApiBearerAuth('bearer')
 @UseGuards(JwtAuthGuard)
@@ -46,9 +41,6 @@ export class UserController {
   /**
    * 获取当前用户的 AI 配置
    * apiKey 已脱敏（只保留前后几位），不会返回加密原文
-   *
-   * @param user JWT 解析出的当前用户信息
-   * @returns AI 配置（选中模型、润色提示词、服务商列表等）
    */
   @Get('ai-config')
   @ApiOperation({ summary: '获取用户 AI 配置（apiKey 已脱敏）' })
@@ -58,9 +50,6 @@ export class UserController {
 
   /**
    * 删除用户 AI 配置
-   * @param user JWT 解析出的当前用户信息
-   * @param id 服务商 ID
-   * @returns 删除结果
    */
   @Delete('ai-config/:id')
   @ApiOperation({ summary: '删除用户 AI 配置（选中模型、润色提示词、服务商列表等）' })
@@ -70,8 +59,6 @@ export class UserController {
 
   /**
    * 获取用户选中模型和润色提示词
-   * @param user JWT 解析出的当前用户信息
-   * @returns 用户选中模型和润色提示词
    */
   @Get('ai-config/sel-model-and-prompt')
   @ApiOperation({ summary: '获取用户选中模型和润色提示词' })
@@ -81,9 +68,6 @@ export class UserController {
 
   /**
    * 更新用户选中模型和润色提示词
-   * @param user JWT 解析出的当前用户信息
-   * @param config 更新参数（选中模型ID、润色提示词）
-   * @returns 更新结果
    */
   @Put('ai-config/sel-model-and-prompt')
   @ApiOperation({ summary: '更新用户选中模型和润色提示词' })

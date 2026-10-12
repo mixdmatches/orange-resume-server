@@ -4,9 +4,6 @@ import { AiCommonService } from './ai-common.service'
 import { CredentialService } from './credential.service'
 import { SessionGuardService } from './session-guard.service'
 
-/**
- * 共享模块
- */
 @Module({
   imports: [UserModule],
   providers: [AiCommonService, CredentialService, SessionGuardService],

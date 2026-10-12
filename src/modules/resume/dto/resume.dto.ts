@@ -1,16 +1,8 @@
 import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator'
 import { ApiProperty } from '@nestjs/swagger'
 
-/**
- * 创建简历 DTO
- * 接收前端完整的 Resume 对象序列化后的数据
- */
+
 export class CreateResumeDto {
-  /**
-   * 简历 ID（可选）
-   * 前端 Local-First 策略会先生成 8 位短 ID 写入本地，然后上传到后端。
-   * 后端将优先使用前端传的 ID，保持前后端一致；若未传则兜底自行生成。
-   */
   @ApiProperty({
     description:
       '简历 ID（可选，前端 Local-First 策略会先生成）。后端优先使用前端传的 ID，保持前后端一致；未传则兜底自行生成。',
@@ -21,9 +13,6 @@ export class CreateResumeDto {
   @IsString({ message: 'id 必须为字符串' })
   id?: string
 
-  /**
-   * 使用的模板 ID（如 'classic' / 'modern'）
-   */
   @ApiProperty({
     description: '模板 ID（与前端模板名称对齐，例如 classic / modern / simple）',
     example: 'classic',
@@ -32,9 +21,6 @@ export class CreateResumeDto {
   @IsString({ message: 'templateId 必须为字符串' })
   templateId!: string
 
-  /**
-   * 简历标题
-   */
   @ApiProperty({
     description: '简历标题（用户给这份简历起的名字，列表页展示用）',
     example: '3年前端开发-求职简历',
@@ -43,10 +29,6 @@ export class CreateResumeDto {
   @IsString({ message: '简历标题必须为字符串' })
   title!: string
 
-  /**
-   * 完整的简历内容（对应前端 Resume 接口类型的整个对象）
-   * 后端直接原样存入 MySQL JSON 字段，不做深度结构校验
-   */
   @ApiProperty({
     description:
       '完整的简历内容对象（= 前端 Resume 接口类型的完整对象）。后端不做结构校验，原样存入 MySQL JSON 列。',
@@ -64,15 +46,7 @@ export class CreateResumeDto {
   @IsObject({ message: '简历内容必须是对象' })
   content!: Record<string, any>
 }
-
-/**
- * 更新简历 DTO
- * MVP 阶段采用全量更新策略：前端把最新的完整 Resume 对象传过来，直接覆盖 content 字段
- */
 export class UpdateResumeDto {
-  /**
-   * 新的模板 ID（可选，不传则不变）
-   */
   @ApiProperty({
     required: false,
     description: '新的模板 ID（可选，不传则数据库原值保留）',
@@ -82,9 +56,6 @@ export class UpdateResumeDto {
   @IsString({ message: 'templateId 必须为字符串' })
   templateId?: string
 
-  /**
-   * 新的简历标题（可选，不传则不变）
-   */
   @ApiProperty({
     required: false,
     description: '新的简历标题（可选，不传则数据库原值保留）',
@@ -94,10 +65,6 @@ export class UpdateResumeDto {
   @IsString({ message: '简历标题必须为字符串' })
   title?: string
 
-  /**
-   * 完整的简历内容（前端完整 Resume 对象）
-   * MVP 阶段建议必传，执行全量覆盖
-   */
   @ApiProperty({
     description: '完整的简历对象（MVP 阶段全量覆盖，建议必传）',
     type: 'object',
@@ -108,13 +75,7 @@ export class UpdateResumeDto {
   content!: Record<string, any>
 }
 
-/**
- * 删除多份简历 DTO
- */
 export class DeleteBatchResumeDto {
-  /**
-   * 要删除的简历 ID 列表
-   */
   @ApiProperty({
     description: '要删除的简历 ID 列表',
     type: 'array',

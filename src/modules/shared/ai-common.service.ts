@@ -8,8 +8,6 @@ import type { AiCredentials } from '../user/user-ai-config.service'
 @Injectable()
 export class AiCommonService {
   /**
-   * 根据凭证动态创建 OpenAI SDK 客户端
-   * 不启用 dangerouslyAllowBrowser（后端环境不需要）
    * @param credentials 解密后的用户凭证 { apiKey, baseUrl, modelId }
    * @returns OpenAI 客户端实例
    */

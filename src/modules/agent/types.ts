@@ -11,11 +11,6 @@ export type ToolParameters = {
   [key: string]: unknown
 }
 
-/**
- * Agent 工具定义接口
- * 每个工具 = 一个 LLM 可调用的 Function，包含元信息 + 执行逻辑
- * 工具实现直接复用现有 AiService 的方法，避免重复造轮子
- */
 export interface AgentTool {
   /** 工具名称（唯一标识，LLM 通过此字段调用） */
   name: string

@@ -9,10 +9,6 @@ import { InterviewLlmService, type InterviewScoreDetail } from './interview-llm.
 import type { CreateInterviewDto } from './dto/create-interview.dto'
 import type { InterviewStreamDto } from './dto/interview-stream.dto'
 
-/* ============================================================
- * SSE 事件协议（冻结，前端按此解析）
- * ============================================================ */
-
 /** 面试 SSE 事件类型 */
 type InterviewSseEvent =
   /** 开始出第 round 题（前端显示"面试官正在提问…"） */
@@ -79,18 +75,6 @@ export interface InterviewDetail {
  *
  * 状态机：pending_questions ──start──→ in_progress ──all answered/finish──→ finished
  * 附加：客户端中途中止（停止生成/断开）→ stopped；继续答题或重新出题后恢复 in_progress
- *
- * 职责：
- * 1. 创建面试会话（ai_session + interview_session 双写，status=pending_questions）
- * 2. 统一 SSE 入口按状态路由：首题流式出题 / 答题评价+追问式下一题 / 提前结束总结
- * 3. 每轮动态出题（不预生成题库）：基于简历 + 历史问答现场流式生成，落库 kind=question（extra 只存 roundIndex）
- * 4. 总结：LLM 生成总结评分 → 填 interview_session.total_score + score_detail + summary
- *
- * 数据库作为唯一状态源：
- *   - interview_session.status 追踪状态机
- *   - COUNT(kind='answer') 算出当前答到第几题
- *   - 最新一条 kind='question' 消息即当前题
- *   - extra JSON 只存 roundIndex 等结构化字段
  */
 @Injectable()
 export class InterviewService {
@@ -100,11 +84,6 @@ export class InterviewService {
     private readonly credentialService: CredentialService,
     private readonly sessionGuard: SessionGuardService,
   ) {}
-
-  // ======================================================================
-  // 内部辅助
-  // ======================================================================
-
   /**
    * 从 extra JSON 安全读取字段（Prisma Json 类型在 MySQL 中可能是对象或 null）
    * 返回值直接 as T，调用方按字段类型正确读取
@@ -146,10 +125,6 @@ export class InterviewService {
       updatedAt: session.updatedAt,
     }
   }
-
-  // ======================================================================
-  // 1. 创建面试会话
-  // ======================================================================
 
   /**
    * 创建面试会话（双写 ai_session + interview_session，状态 pending_questions）
@@ -196,21 +171,8 @@ export class InterviewService {
     } as AiSession & { interviewSession: InterviewSession })
   }
 
-  // ======================================================================
-  // 2. 面试统一 SSE 入口（开始 / 答题 / 提前结束，按 DB 状态路由）
-  // ======================================================================
-
   /**
-   * 面试统一 SSE 流（唯一写入口，前端只需对接这一个接口）
-   *
-   * 按 interview_session.status 路由行为：
-   * - pending_questions → 开始面试：generating → next_question(round 1)
-   * - in_progress / stopped + content → 答题：evaluation_start → evaluation_done → next_question / summary
-   * - in_progress / stopped + finishOnly=true → 提前结束：summary_start → summary* → done
-   * - finished → error 事件
-   * - stopped（用户中途中止）→ 与 in_progress 同等对待，答题/总结后自动恢复
-   *
-   * 所有错误（含 404）都在 SSE 连接建立后以 error 事件推送（响应头已 flush，无法改 HTTP 状态码）
+   * 面试统一 SSE 流
    */
   interviewStream(
     userId: number,
@@ -218,11 +180,8 @@ export class InterviewService {
     dto: InterviewStreamDto,
   ): Observable<{ data: string }> {
     return new Observable((subscriber) => {
-      /** 流式 LLM 调用的中止控制器（客户端中途中止时统一 abort，避免上游继续生成浪费 token） */
       const streamAbort = new AbortController()
-      /** 流是否已正常完成（finish() 前置位，teardown 据此区分"正常结束"与"用户中止"） */
       let finished = false
-      /** 当前面试会话 ID（异步校验通过后填充，teardown 据此更新状态） */
       let interviewId: bigint | null = null
 
       const push: SsePush = (payload: InterviewSseEvent) => {
@@ -354,17 +313,9 @@ export class InterviewService {
     })
   }
 
-  // ======================================================================
-  // 3. 动态出题内部流程（流式生成 + 追问）
-  // ======================================================================
 
   /**
    * 流式生成第 round 轮的面试题并落库
-   * 事件序列：question_start → question*（token 流）→ question_done
-   * - 第 1 轮：基于简历出开场题（外层在 pending_questions 时以 round=1 调用）
-   * - 后续轮：基于历史问答追问或切换维度（外层在答题评价后以 round=上一轮+1 调用）
-   * - 出完落库时把状态（含 stopped 恢复）统一推进为 in_progress，首轮同时记录 startedAt
-   * 题目文本在流式完成后一次性落库（流式中断则不落库，用户重连后本轮重新出题）
    */
   private async runAskQuestion(
     interview: AiSession & { interviewSession: InterviewSession },
@@ -476,10 +427,6 @@ export class InterviewService {
     if (current) history.push(current)
     return history
   }
-
-  // ======================================================================
-  // 4. 生成总结（内部函数，供答题 / 提前结束流程调用）
-  // ======================================================================
 
   /**
    * 总结阶段：收集所有 Q&A → 调 LLM 生成结构化评分 + 流式总结文本 → 填 DB
@@ -625,9 +572,6 @@ export class InterviewService {
 
   /**
    * 后台静默批量评价：done 事件推送后才开始执行
-   * - 串行调用 LLM 评价每道已回答的题
-   * - 落库单题评价消息（GET 详情接口时返回）
-   * - 失败不抛异常（评价只是详情页的补充信息，丢了可重试或降级）
    */
   private async runSilentEvaluation(
     interview: AiSession & { interviewSession: InterviewSession },
@@ -669,10 +613,6 @@ export class InterviewService {
     }
     console.log('[Interview] 后台评价完成，共', answeredQuestions.length, '题')
   }
-
-  // ======================================================================
-  // 5. 查询接口
-  // ======================================================================
 
   /** 面试列表（offset 分页，按最近活跃倒序，排除已删除） */
   async listInterviews(
@@ -795,14 +735,8 @@ export class InterviewService {
     return { success: true }
   }
 
-  // ======================================================================
-  // 辅助：把简历 JSON 内容拼接为纯文本（供 LLM 出题用）
-  // ======================================================================
-
   /**
    * 把 Resume JSON 内容（前端 Resume 接口结构）拼接成纯文本
-   * 用于喂给 LLM 生成面试题 / 总结
-   * 兼容旧结构（section 可能是数组或对象）
    */
   private stringifyResumeContent(content: Prisma.InputJsonValue): string {
     if (!content || typeof content !== 'object') return ''

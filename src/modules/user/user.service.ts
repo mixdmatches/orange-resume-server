@@ -2,9 +2,6 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import * as bcrypt from 'bcrypt'
 import { PrismaService } from '../../prisma/prisma.service'
 
-/**
- * 创建用户时的入参接口（由 RegisterDto 转换而来）
- */
 export interface CreateUserInput {
   username: string
   email: string
@@ -12,9 +9,6 @@ export interface CreateUserInput {
   password: string
 }
 
-/**
- * 用户资料返回结构（注意：绝对不包含 passwordHash）
- */
 export interface UserProfile {
   id: number
   username: string
@@ -23,10 +17,6 @@ export interface UserProfile {
   avatar: string | null
 }
 
-/**
- * 用户模块 Service
- * 提供用户相关的底层数据库操作，被 AuthService 调用，不直接对外暴露路由
- */
 @Injectable()
 export class UserService {
   /** bcrypt 加密盐轮次，10 是安全性与性能的平衡值 */
@@ -36,9 +26,6 @@ export class UserService {
 
   /**
    * 创建一个新用户（注册）
-   * 1. 先检查 username / email 是否已存在
-   * 2. 使用 bcrypt.hash 对密码进行哈希
-   * 3. 写入 User 表
    *
    * @param input 创建入参 { username, email, password(明文) }
    * @returns 新建用户的 id, username, email

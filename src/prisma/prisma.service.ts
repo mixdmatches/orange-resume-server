@@ -1,14 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, INestApplication } from '@nestjs/common'
 import { PrismaClient } from '@prisma/client'
 
-/**
- * Prisma 数据库服务
- * 封装 PrismaClient 生命周期，随 NestJS 模块启动/关闭自动管理连接
- * 所有业务 Service 都通过依赖注入拿到 PrismaService 来操作数据库
- *
- * 注意：Prisma 5.0+ 已移除旧的 `$on('beforeExit')` 钩子（library engine 模式下该事件不再存在），
- *      本实现使用标准的 process.on('SIGINT' / 'SIGTERM') 信号监听来触发优雅关闭。
- */
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   /**
@@ -29,12 +21,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   /**
    * 启用「优雅关闭」监听 —— 适配 Prisma 5+ library engine
-   *
-   * 工作原理：
-   * 1. 先调用 NestJS 官方的 app.enableShutdownHooks()，让 Nest 自身响应 SIGINT/SIGTERM 信号
-   * 2. 额外在 process 对象上监听相同信号，做兜底（Windows 下 Ctrl+C、Docker stop、PM2 restart 等场景）
-   * 3. 信号到达时：关闭 Nest app（会依次触发 onModuleDestroy → this.$disconnect）→ 最后安全退出进程
-   *
    * @param app NestApplication 实例，用于执行 app.close()
    */
   async enableShutdownHooks(app: INestApplication): Promise<void> {

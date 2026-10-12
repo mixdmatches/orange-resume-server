@@ -9,13 +9,6 @@ import { PrismaService } from './prisma/prisma.service'
 
 /**
  * NestJS 应用启动入口
- * 负责：
- * 1. 创建应用实例
- * 2. 装配全局 Pipe（参数校验）、Interceptor（统一响应）、Filter（统一异常）
- * 3. 配置 CORS、全局 API 前缀
- * 4. 配置 Swagger 文档（带 Bearer Token 授权按钮，可直接在 UI 里测试需要登录的接口）
- * 5. 读取配置端口启动 HTTP 服务
- * 6. 启用 Prisma 的优雅关闭钩子
  */
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule)
@@ -32,9 +25,6 @@ async function bootstrap(): Promise<void> {
   )
 
   // ============== 全局拦截器 & 过滤器 ==============
-  // 说明：这里直接 new 实例（而非 app.get），原因是这两个类未进入任何模块的 providers 数组，
-  //      且两者都没有构造函数依赖注入，直接实例化即可正常工作，避免 "provider does not exist" 报错。
-  //      （如果将来它们需要注入依赖，可改用 AppModule providers 中 APP_INTERCEPTOR / APP_FILTER token 注册方式）
   app.useGlobalInterceptors(new TransformInterceptor())
   app.useGlobalFilters(new HttpExceptionFilter())
 
@@ -59,9 +49,6 @@ async function bootstrap(): Promise<void> {
 
   // ============== Swagger 文档配置 ==============
   // 访问地址：http://localhost:3000/api/docs
-  // - 页面右上角「Authorize」按钮输入 Bearer Token 后，可直接在 UI 内调所有需要登录的接口
-  // - SSE 流式接口（/ai/chat/stream、/ai/self-intro/stream）在 Swagger UI 内无法持续接收推送
-  //   （UI 会等响应结束才显示），生产环境建议用 curl -N 或前端页面测试
   const swaggerConfig = new DocumentBuilder()
     .setTitle('🍊 橙子简历 - 后端 API 文档')
     .setDescription(
@@ -96,36 +83,29 @@ async function bootstrap(): Promise<void> {
 
   const document = SwaggerModule.createDocument(app, swaggerConfig, {
     // 全局响应：所有接口统一都返回 { code, message, data }
-    // ignoreGlobalPrefix: false → 文档里的 URL 会自动带 /api 前缀（和 setGlobalPrefix 对齐）
     ignoreGlobalPrefix: false,
     operationIdFactory: (_controllerKey, methodKey) => methodKey, // 简化 SDK 生成时的 operationId 名称
   })
 
-  // 挂载 Swagger UI，路径：/api/docs
-  // 说明：SwaggerModule.setup() 的第一个参数是「绝对挂载路径」，不会自动叠加 setGlobalPrefix('api')。
-  //       所以必须写 "api/docs" 才能和前端约定的 /api/* 路径风格保持一致。
   SwaggerModule.setup('api/docs', app, document, {
     swaggerOptions: {
-      // 默认折叠 Schemas 面板（让页面默认清爽一点）
       docExpansion: 'list',
       defaultModelsExpandDepth: 1,
       defaultModelExpandDepth: 1,
-      // 让「Try it out」默认显示请求示例
       tryItOutEnabled: false,
-      // 页面右上角显示请求持续时间
       showRequestDuration: true,
-      filter: true, // 顶部出现搜索框，可按路径/tag 筛选
-      persistAuthorization: true, // 关掉页面后 Token 不会丢，下次打开还在
+      filter: true,
+      persistAuthorization: true,
     },
-    customCss: '.swagger-ui .topbar { display: none }', // 隐藏顶部 Swagger 官方 logo 条，更贴近「项目文档」
-    customSiteTitle: '🍊 橙子简历 API 文档', // 浏览器标签页标题
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: '🍊 橙子简历 API 文档',
   })
 
   // ============== 端口 & 启动 ==============
   const configService = app.get(ConfigService)
   const port = Number(configService.get<string>('PORT')) || 3000
 
-  // 启用优雅关闭（配合 PrismaService onModuleDestroy 正常释放连接）
+  // 启用优雅关闭
   const prismaService = app.get(PrismaService)
   await prismaService.enableShutdownHooks(app)
 
@@ -138,7 +118,6 @@ async function bootstrap(): Promise<void> {
   console.log(`${green}[orange-resume-server] 启动成功，监听 http://localhost:${port}${reset}`)
   console.log(`${cyan}📖 Swagger UI 文档: http://localhost:${port}/api/docs${reset}`)
   console.log(`API 前缀: /api`)
-  console.log(`接口文档示例: POST /api/auth/register`)
 }
 
 bootstrap()

@@ -9,8 +9,6 @@ import type { LoginDto } from './dto/login.dto'
 
 /**
  * 登录成功返回结构（双 Token 版本）
- * - accessToken：短寿命，业务请求放 Authorization: Bearer <accessToken>
- * - refreshToken：长寿命，仅用于 POST /auth/refresh 静默换新令牌对
  */
 export interface LoginResult {
   /** 访问令牌（默认 2h 过期）：所有业务接口的通行证 */
@@ -59,13 +57,9 @@ export class AuthService {
 
   /**
    * 用户登录
-   * 1. 根据 identifier 找到用户（支持 username 或 email）
-   * 2. bcrypt.compare 校验密码哈希
-   * 3. 校验通过后签发 accessToken + refreshToken 令牌对
    *
    * @param dto 登录参数 { username(或email), password }
    * @returns LoginResult { accessToken, refreshToken, userInfo }
-   * @throws BadRequestException (40002) 用户不存在或密码错误（避免与 40101 Token 失效混淆）
    */
   async login(dto: LoginDto): Promise<LoginResult> {
     const user = await this.userService.findByUsernameOrEmail(dto.username)

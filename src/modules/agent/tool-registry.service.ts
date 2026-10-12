@@ -5,15 +5,6 @@ import { resumeScoreTool, grammarCheckTool, jobMatchTool } from './tools'
 
 type OpenAITool = OpenAI.Chat.Completions.ChatCompletionTool
 
-/**
- * 工具注册表
- * 职责：
- * 1. 持有所有可用工具的实例（启动时注册，运行时只读）
- * 2. 把工具列表转换为 OpenAI tools 参数格式，供 LLM 决策调用
- * 3. 根据 LLM 返回的 tool_call 名称路由到对应工具执行
- *
- * 设计为单例服务，AgentRunner 注入后即可使用全部工具
- */
 @Injectable()
 export class ToolRegistryService {
   /** 工具映射表：name -> AgentTool */
