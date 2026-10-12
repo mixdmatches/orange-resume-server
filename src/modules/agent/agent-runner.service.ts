@@ -180,7 +180,6 @@ export class AgentRunnerService {
               {
                 messages,
                 model: credentials.modelId,
-                temperature: 0.7,
                 stream: true,
                 tools,
               },

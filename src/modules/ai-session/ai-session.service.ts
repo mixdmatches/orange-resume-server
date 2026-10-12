@@ -359,7 +359,6 @@ export class AiSessionService {
           const buildBody = (includeUsage: boolean) => ({
             messages: historyMessages,
             model: credentials.modelId,
-            temperature: 0.7,
             stream: true as const,
             ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
           })

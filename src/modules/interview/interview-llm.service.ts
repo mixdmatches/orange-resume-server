@@ -164,7 +164,6 @@ ${
               { role: 'user', content: userContent },
             ],
             model: credentials.modelId,
-            temperature: 0.8,
             stream: true as const,
             ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
           })
@@ -251,7 +250,6 @@ ${
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.3,
         stream: false,
       })
 
@@ -359,7 +357,6 @@ ${
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.3,
         stream: false,
       })
 
@@ -459,7 +456,6 @@ ${
               { role: 'user', content: allQaText },
             ],
             model: credentials.modelId,
-            temperature: 0.5,
             stream: true as const,
             ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
           })

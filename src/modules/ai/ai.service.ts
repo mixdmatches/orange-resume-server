@@ -21,7 +21,6 @@ import {
   INITIAL_GLOBAL_CONFIGURATION,
 } from './constants/resume-defaults'
 
-
 export type GrammarSeverity = 'error' | 'warning'
 export interface GrammarIssue {
   section: string
@@ -73,7 +72,6 @@ export class AiService {
     private readonly aiCommon: AiCommonService,
     private readonly credentialService: CredentialService,
   ) {}
-
 
   /** 解析用户 AI 凭证（带偏好校验） */
   private async resolveCredentials(userId: number, providerId?: string): Promise<AiCredentials> {
@@ -167,13 +165,12 @@ export class AiService {
     - internships: [{id, companyName, position, dateRange, description,visible:true }]
     - projects: [{id, name, role, gitAddress, dateRange, description,visible:true }]
     - skills: string
-    id必须给一个唯一的字符串
+    id暂时先不给
     整体JSON格式参考：字段与 Resume 类型完全一致。
     globalConfiguration 使用：${JSON.stringify(INITIAL_GLOBAL_CONFIGURATION)}
     简历内容：
     ${pdfText}`
   }
-
 
   /**
    * 测试用户 API 连接是否可用
@@ -202,7 +199,6 @@ export class AiService {
           { role: 'user', content: 'ping' },
         ],
         max_tokens: 1,
-        temperature: 0,
       })
     } catch (error) {
       console.error('[AI] 测试连接失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
@@ -252,7 +248,6 @@ export class AiService {
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.2,
       },
       '语法检查',
       credentials.apiKey,
@@ -307,7 +302,6 @@ export class AiService {
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.3,
       },
       '简历评分',
       credentials.apiKey,
@@ -322,7 +316,6 @@ export class AiService {
       },
     )
   }
-
 
   /**
    * 分析简历与 JD 的匹配度，输出匹配度、技能缺口、亮点/薄弱点和改进建议
@@ -370,7 +363,6 @@ ${dto.resumeText}`
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.3,
       },
       '岗位匹配分析',
       credentials.apiKey,
@@ -385,7 +377,6 @@ ${dto.resumeText}`
       },
     )
   }
-
 
   /**
    * 根据简历生成指定数量面试题及参考答案，输出 Markdown 格式字符串
@@ -428,7 +419,6 @@ Q2: [问题2]
           },
         ],
         model: credentials.modelId,
-        temperature: 0.7,
         max_tokens: 2000,
       },
       '生成面试问题',
@@ -436,7 +426,6 @@ Q2: [问题2]
       (content) => ({ content }),
     )
   }
-
 
   /**
    * 根据 PDF 纯文本让 AI 生成完整 Resume 结构
@@ -459,7 +448,6 @@ Q2: [问题2]
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.7,
       },
       'PDF 转 JSON',
       credentials.apiKey,
@@ -502,7 +490,6 @@ Q2: [问题2]
         ],
         model: credentials.modelId,
         response_format: { type: 'json_object' },
-        temperature: 0.7,
       },
       '流式PDF转JSON',
       credentials.apiKey,
@@ -528,7 +515,6 @@ Q2: [问题2]
           content: m.content,
         })),
         model: credentials.modelId,
-        temperature: 0.7,
       },
       '流式对话',
       credentials.apiKey,
@@ -571,7 +557,6 @@ ${dto.resumeText}`
           { role: 'user', content: '请生成自我介绍' },
         ],
         model: credentials.modelId,
-        temperature: 0.7,
       },
       '自我介绍生成',
       credentials.apiKey,
