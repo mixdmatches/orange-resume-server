@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import OpenAI from 'openai'
+import type { z } from 'zod'
 import type { GrammarCheckDto } from './dto/grammar-check.dto'
 import type { ResumeScoreDto } from './dto/resume-score.dto'
 import type { JobMatchDto } from './dto/job-match.dto'
@@ -20,52 +20,20 @@ import {
   DEFAULT_TITLE_PREFIX,
   INITIAL_GLOBAL_CONFIGURATION,
 } from './constants/resume-defaults'
+import {
+  GrammarCheckSchema,
+  JobMatchSchema,
+  ResumeScoreSchema,
+  type GrammarCheckResult,
+  type JobMatchResult,
+  type ResumeScoreResult,
+} from './ai.schemas'
 
-export type GrammarSeverity = 'error' | 'warning'
-export interface GrammarIssue {
-  section: string
-  original: string
-  suggestion: string
-  reason: string
-  severity: GrammarSeverity
-}
+export type { GrammarCheckResult, JobMatchResult, ResumeScoreResult }
 
-export interface GrammarCheckResult {
-  issues: GrammarIssue[]
-}
+/** OpenAI 协议兼容消息（LangChain 可直接接收该结构） */
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
 
-export interface ResumeScoreDimension {
-  name: string
-  score: number
-  comment: string
-}
-export interface ResumeScoreResult {
-  totalScore: number
-  grade: 'S' | 'A' | 'B' | 'C' | 'D'
-  dimensions: ResumeScoreDimension[]
-  overallComment: string
-  top3Issues: string[]
-  top3Highlights: string[]
-}
-
-export interface JobMatchPoint {
-  section: string
-  point: string
-}
-export interface JobMatchResult {
-  matchScore: number
-  matchedSkills: string[]
-  missingSkills: string[]
-  highlights: JobMatchPoint[]
-  weaknesses: JobMatchPoint[]
-  suggestions: string[]
-}
-
-/** SSE 推送的事件格式（每次 event-stream 的 data 字段） */
-export interface SseEventPayload {
-  content?: string
-  done?: boolean
-}
 @Injectable()
 export class AiService {
   constructor(
@@ -79,71 +47,22 @@ export class AiService {
   }
 
   /**
-   * 通用：调用 OpenAI 非流式接口并做统一错误处理
-   * @param openai 已创建的 OpenAI 客户端
-   * @param params chat.completions.create 非流式参数（不含 stream）
-   * @param errorLabel 错误日志标签，如 '语法检查'
-   * @param apiKey 用于日志掩码的明文 key
-   * @param postProcess 对模型返回 content 的后处理函数
+   * 结构化输出统一入口：jsonMode（response_format=json_object）+ Zod 校验
+   * 模型坏字段/缺失字段由 schema 的 catch/default 兜底，保证返回结构完整
    */
-  private async callCompletion<T = string>(
-    openai: OpenAI,
-    params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-    errorLabel: string,
-    apiKey: string,
-    postProcess?: (content: string) => T,
-  ): Promise<T> {
+  private async invokeStructured<S extends z.ZodObject>(
+    credentials: AiCredentials,
+    schema: S,
+    messages: ChatMessage[],
+  ): Promise<z.output<S>> {
+    const structured = this.aiCommon
+      .createChatModel(credentials)
+      .withStructuredOutput(schema, { method: 'jsonMode' })
     try {
-      const completion = await openai.chat.completions.create({ ...params, stream: false })
-      const content = completion.choices[0]?.message?.content || ''
-      return postProcess ? postProcess(content) : (content as unknown as T)
+      return (await structured.invoke(messages)) as z.output<S>
     } catch (error) {
-      console.error('[AI] %s失败（key=%s）', errorLabel, this.aiCommon.maskKey(apiKey))
       throw new BadRequestException(this.aiCommon.formatError(error))
     }
-  }
-
-  /**
-   * 通用：创建流式 Observable，封装 SSE 推送的完整生命周期
-   * 自动处理 for-await 遍历、content 增量推送、done 结束信号、错误捕获
-   * @param openai 已创建的 OpenAI 客户端
-   * @param params chat.completions.create 参数（不含 stream，会自动加 true）
-   * @param errorLabel 错误日志标签，如 '流式对话'
-   * @param apiKey 用于日志掩码的明文 key
-   */
-  private createStreamObservable(
-    openai: OpenAI,
-    params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'stream'>,
-    errorLabel: string,
-    apiKey: string,
-  ): Observable<{ data: string }> {
-    return new Observable((subscriber) => {
-      ;(async () => {
-        try {
-          const stream = await openai.chat.completions.create({ ...params, stream: true })
-
-          for await (const chunk of stream) {
-            const delta = chunk.choices[0]?.delta?.content || ''
-            if (delta) {
-              subscriber.next({
-                data: JSON.stringify({ content: delta } as SseEventPayload),
-              })
-            }
-          }
-
-          // 推送结束信号
-          subscriber.next({
-            data: JSON.stringify({ done: true } as SseEventPayload),
-          })
-          subscriber.complete()
-        } catch (error) {
-          console.error('[AI] %s失败（key=%s）', errorLabel, this.aiCommon.maskKey(apiKey))
-          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
-        }
-      })()
-
-      return () => {}
-    })
   }
 
   /**
@@ -173,8 +92,30 @@ export class AiService {
   }
 
   /**
+   * 补齐 Resume JSON 缺失字段（与前端 pdfToJsonWithAI 后处理逻辑一致）
+   * Resume 结构过于庞大且需要兜底默认值，不适用严格 schema，沿用 jsonMode + 手动解析
+   */
+  private normalizeResumeJson(content: string): Record<string, any> {
+    const parsed = JSON.parse(content || '{}') as Record<string, any>
+    const id = generateShortId()
+    parsed.id = id
+    parsed.title = parsed.title ?? `${DEFAULT_TITLE_PREFIX}${id}`
+    parsed.templateId = parsed.templateId || DEFAULT_TEMPLATE_ID
+    parsed.globalConfiguration = parsed.globalConfiguration || INITIAL_GLOBAL_CONFIGURATION
+    parsed.menuSections = parsed.menuSections || DEFAULT_MENU_SECTIONS
+    parsed.customData = parsed.customData || {}
+    if (parsed.basic) {
+      parsed.basic.photo = parsed.basic.photo || ''
+      parsed.basic.photoConfig = parsed.basic.photoConfig || DEFAULT_PHOTO_CONFIG
+    }
+    parsed.createdAt = Date.now()
+    parsed.updatedAt = null
+    return parsed
+  }
+
+  /**
    * 测试用户 API 连接是否可用
-   * 发送最小请求（max_tokens=1）验证参数正确性
+   * 发送最小请求（maxTokens=1）验证参数正确性
    * @param userId 当前登录用户 ID
    * @param providerId 服务商唯一标识
    * @returns { success: true }
@@ -186,20 +127,17 @@ export class AiService {
       providerId,
     )
 
-    const openai = this.aiCommon.createOpenAIClient(credentials)
+    // maxTokens 仅支持通过构造参数传入（LangChain 调用级参数不含 maxTokens）
+    const model = this.aiCommon.createChatModel(credentials, { maxTokens: 1 })
 
     try {
-      await openai.chat.completions.create({
-        model: credentials.modelId,
-        messages: [
-          {
-            role: 'system',
-            content: '你正在进行连接测试，请忽略此内容。只需回复一个字',
-          },
-          { role: 'user', content: 'ping' },
-        ],
-        max_tokens: 1,
-      })
+      await model.invoke([
+        {
+          role: 'system',
+          content: '你正在进行连接测试，请忽略此内容。只需回复一个字',
+        },
+        { role: 'user', content: 'ping' },
+      ])
     } catch (error) {
       console.error('[AI] 测试连接失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
       throw new BadRequestException(this.aiCommon.formatError(error))
@@ -216,7 +154,6 @@ export class AiService {
    */
   async checkGrammar(userId: number, dto: GrammarCheckDto): Promise<GrammarCheckResult> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const systemPrompt = `你是专业的中文文案校对专家。请检查简历文本中的：错别字、语病、标点错误、中英文混用问题、冗余表达。
 
@@ -239,24 +176,10 @@ export class AiService {
 3. original 必须是简历中真实存在的原文片段
 4. reason 要简短说明问题原因`
 
-    return this.callCompletion<GrammarCheckResult>(
-      openai,
-      {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: dto.resumeText },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-      },
-      '语法检查',
-      credentials.apiKey,
-      (content) => {
-        const parsed = JSON.parse(content || '{"issues":[]}') as { issues?: unknown }
-        const issues = Array.isArray(parsed.issues) ? (parsed.issues as GrammarIssue[]) : []
-        return { issues }
-      },
-    )
+    return this.invokeStructured(credentials, GrammarCheckSchema, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: dto.resumeText },
+    ])
   }
 
   /**
@@ -267,7 +190,6 @@ export class AiService {
    */
   async scoreResume(userId: number, dto: ResumeScoreDto): Promise<ResumeScoreResult> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const systemPrompt = `你是资深 HR 简历审核官，请从以下 6 个维度给简历打分（每项 0-100）：
 1. 内容详实度：是否有量化数据、具体成果、明确职责
@@ -293,28 +215,13 @@ export class AiService {
   "top3Highlights": ["亮点1", "亮点2", "亮点3"]
 }`
 
-    return this.callCompletion<ResumeScoreResult>(
-      openai,
-      {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: dto.resumeText },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-      },
-      '简历评分',
-      credentials.apiKey,
-      (content) => {
-        const parsed = JSON.parse(content || '{}') as ResumeScoreResult
-        parsed.grade = parsed.grade || scoreToGrade(parsed.totalScore || 0)
-        parsed.dimensions = parsed.dimensions || []
-        parsed.overallComment = parsed.overallComment || ''
-        parsed.top3Issues = parsed.top3Issues || []
-        parsed.top3Highlights = parsed.top3Highlights || []
-        return parsed
-      },
-    )
+    const result = await this.invokeStructured(credentials, ResumeScoreSchema, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: dto.resumeText },
+    ])
+    // grade 允许模型缺省，按总分推导等级
+    result.grade = result.grade || scoreToGrade(result.totalScore || 0)
+    return result
   }
 
   /**
@@ -324,7 +231,6 @@ export class AiService {
    */
   async analyzeJobMatch(userId: number, dto: JobMatchDto): Promise<JobMatchResult> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const systemPrompt = `你是一位资深技术招聘官，需要评估候选人简历与岗位描述（JD）的匹配度。
 
@@ -354,28 +260,10 @@ export class AiService {
 简历内容：
 ${dto.resumeText}`
 
-    return this.callCompletion<JobMatchResult>(
-      openai,
-      {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `岗位描述（JD）：\n${dto.jobDescription}` },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-      },
-      '岗位匹配分析',
-      credentials.apiKey,
-      (content) => {
-        const parsed = JSON.parse(content || '{}') as JobMatchResult
-        parsed.matchedSkills = parsed.matchedSkills || []
-        parsed.missingSkills = parsed.missingSkills || []
-        parsed.highlights = parsed.highlights || []
-        parsed.weaknesses = parsed.weaknesses || []
-        parsed.suggestions = parsed.suggestions || []
-        return parsed
-      },
-    )
+    return this.invokeStructured(credentials, JobMatchSchema, [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `岗位描述（JD）：\n${dto.jobDescription}` },
+    ])
   }
 
   /**
@@ -388,7 +276,6 @@ ${dto.resumeText}`
     dto: InterviewQuestionsDto,
   ): Promise<{ content: string }> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const count = dto.questionCount ?? 5
 
@@ -408,23 +295,21 @@ Q2: [问题2]
 
 ...以此类推`
 
-    return this.callCompletion<{ content: string }>(
-      openai,
-      {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: `根据以下简历生成面试问题：\n\n${dto.resumeContent}`,
-          },
-        ],
-        model: credentials.modelId,
-        max_tokens: 2000,
-      },
-      '生成面试问题',
-      credentials.apiKey,
-      (content) => ({ content }),
-    )
+    const model = this.aiCommon.createChatModel(credentials, { maxTokens: 2000 })
+
+    try {
+      const message = await model.invoke([
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: `根据以下简历生成面试问题：\n\n${dto.resumeContent}`,
+        },
+      ])
+      return { content: message.text }
+    } catch (error) {
+      console.error('[AI] 生成面试问题失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
+    }
   }
 
   /**
@@ -435,64 +320,42 @@ Q2: [问题2]
    */
   async pdfToJson(userId: number, dto: PdfToJsonDto): Promise<Record<string, any>> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const prompt = this.buildPdfToJsonPrompt(dto.pdfText)
 
-    return this.callCompletion<Record<string, any>>(
-      openai,
-      {
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: dto.pdfText },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-      },
-      'PDF 转 JSON',
-      credentials.apiKey,
-      (content) => {
-        const parsed = JSON.parse(content || '{}') as Record<string, any>
-        // 同前端 pdfToJsonWithAI 后处理逻辑
-        const id = generateShortId()
-        parsed.id = id
-        parsed.title = parsed.title ?? `${DEFAULT_TITLE_PREFIX}${id}`
-        parsed.templateId = parsed.templateId || DEFAULT_TEMPLATE_ID
-        parsed.globalConfiguration = parsed.globalConfiguration || INITIAL_GLOBAL_CONFIGURATION
-        parsed.menuSections = parsed.menuSections || DEFAULT_MENU_SECTIONS
-        parsed.customData = parsed.customData || {}
-        if (parsed.basic) {
-          parsed.basic.photo = parsed.basic.photo || ''
-          parsed.basic.photoConfig = parsed.basic.photoConfig || DEFAULT_PHOTO_CONFIG
-        }
-        parsed.createdAt = Date.now()
-        parsed.updatedAt = null
-        return parsed
-      },
-    )
+    const model = this.aiCommon
+      .createChatModel(credentials)
+      .withConfig({ response_format: { type: 'json_object' } })
+
+    try {
+      const message = await model.invoke([
+        { role: 'system', content: prompt },
+        { role: 'user', content: dto.pdfText },
+      ])
+      return this.normalizeResumeJson(message.text)
+    } catch (error) {
+      console.error('[AI] PDF 转 JSON失败（key=%s）', this.aiCommon.maskKey(credentials.apiKey))
+      throw new BadRequestException(this.aiCommon.formatError(error))
+    }
   }
 
-  /**
-   * 流式 pdf 转 json（修复了之前缺失 stream:true 的 bug）
-   */
+  /** 流式 pdf 转 json */
   async pdfToJsonStream(userId: number, dto: PdfToJsonDto): Promise<Observable<{ data: string }>> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const prompt = this.buildPdfToJsonPrompt(dto.pdfText)
 
-    return this.createStreamObservable(
-      openai,
-      {
-        messages: [
+    const model = this.aiCommon
+      .createChatModel(credentials)
+      .withConfig({ response_format: { type: 'json_object' } })
+
+    return this.aiCommon.sseFromStream(
+      () =>
+        model.stream([
           { role: 'system', content: prompt },
           { role: 'user', content: dto.pdfText },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-      },
-      '流式PDF转JSON',
-      credentials.apiKey,
+        ]),
+      { errorLabel: '流式PDF转JSON', apiKey: credentials.apiKey },
     )
   }
 
@@ -505,19 +368,18 @@ Q2: [问题2]
    */
   async chatStream(userId: number, dto: ChatStreamDto): Promise<Observable<{ data: string }>> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
-    return this.createStreamObservable(
-      openai,
-      {
-        messages: dto.messages.map((m) => ({
-          role: m.role as 'system' | 'user' | 'assistant',
-          content: m.content,
-        })),
-        model: credentials.modelId,
-      },
-      '流式对话',
-      credentials.apiKey,
+    const model = this.aiCommon.createChatModel(credentials)
+
+    return this.aiCommon.sseFromStream(
+      () =>
+        model.stream(
+          dto.messages.map((m) => ({
+            role: m.role as 'system' | 'user' | 'assistant',
+            content: m.content,
+          })),
+        ),
+      { errorLabel: '流式对话', apiKey: credentials.apiKey },
     )
   }
 
@@ -530,7 +392,6 @@ Q2: [问题2]
    */
   async selfIntroStream(userId: number, dto: SelfIntroDto): Promise<Observable<{ data: string }>> {
     const credentials = await this.resolveCredentials(userId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     const { scene, duration, tone } = dto.options
     const wordCount = duration * 220 // 中文语速估算
@@ -549,17 +410,15 @@ Q2: [问题2]
 简历内容：
 ${dto.resumeText}`
 
-    return this.createStreamObservable(
-      openai,
-      {
-        messages: [
+    const model = this.aiCommon.createChatModel(credentials)
+
+    return this.aiCommon.sseFromStream(
+      () =>
+        model.stream([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: '请生成自我介绍' },
-        ],
-        model: credentials.modelId,
-      },
-      '自我介绍生成',
-      credentials.apiKey,
+        ]),
+      { errorLabel: '自我介绍生成', apiKey: credentials.apiKey },
     )
   }
 }

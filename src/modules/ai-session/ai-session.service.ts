@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import OpenAI from 'openai'
 import type {
   AiSession,
   AiSessionMessage,
@@ -24,15 +23,6 @@ import type { UpdateSessionDto } from './dto/update-session.dto'
 import type { ListSessionsDto } from './dto/list-sessions.dto'
 import type { ListMessagesDto } from './dto/list-messages.dto'
 import type { SendMessageDto } from './dto/send-message.dto'
-
-/** SSE 推送的事件格式（与 ai.service 的 SseEventPayload 兼容，额外扩展了统计字段） */
-interface SessionSseEventPayload {
-  content?: string
-  done?: boolean
-  messageId?: string
-  promptTokens?: number
-  completionTokens?: number
-}
 
 /**
  * 会话接口响应结构（serializeSession 的返回值类型）
@@ -249,21 +239,11 @@ export class AiSessionService {
   }
 
   /**
-   * 会话内流式对话：先落库用户消息，再流式调用 LLM 并把 AI 回复全文 + token 用量回填
-   *
-   * 流程：
-   * 1. 校验会话归属 / 类型（仅 chat）/ 未删除
-   * 2. 解析凭证（dto.providerId 优先，否则用户偏好中选中的厂商）
-   * 3. 事务：写入用户消息 + 更新会话（providerId/modelId 记录"最近使用"，顺带刷新 updatedAt）
-   *    - 若标题仍为默认值，则用首条用户消息截取生成标题
-   * 4. 读取最近 MAX_HISTORY_MESSAGES 条历史（排除 failed 的残缺消息）组装上下文
-   * 5. 创建 assistant 占位消息（stream_status=streaming）
-   * 6. 流式转发：每个增量通过 SSE 发给前端；结束后回填全文 + token；客户端断开/出错标记 failed
-   *
+   * 会话内流式对话：先落库用户消息，再流式调用 LLM 并把 AI 回复全文回填
    * @param userId 当前登录用户 ID
    * @param sessionIdStr 会话 ID 字符串
    * @param dto 消息内容 + 可选厂商
-   * @returns SSE Observable（data 为 JSON 字符串：{ content } / { done, messageId, promptTokens, completionTokens }）
+   * @returns SSE Observable（data 为 JSON 字符串：{ content } / { done, messageId }）
    */
   async chatInSession(
     userId: number,
@@ -280,7 +260,6 @@ export class AiSessionService {
     const preference = await this.prisma.aiPreference.findUnique({ where: { userId } })
     const providerId = dto.providerId || preference?.selectedProviderId
     const credentials = await this.credentialService.resolveCredentials(userId, providerId)
-    const openai = this.aiCommon.createOpenAIClient(credentials)
 
     // 3. 事务：落库用户消息 + 更新会话记录（含首条消息自动生成标题）
     const content = dto.content
@@ -320,107 +299,59 @@ export class AiSessionService {
       },
     })
 
-    // 6. 流式调用 + 落库（Observable 模式与 ai.controller 的 SSE 管道对接）
-    return new Observable((subscriber) => {
-      let partial = '' // 已收到的全文（用于回填）
-      let promptTokens = 0
-      let completionTokens = 0
-      let settled = false // 是否已回填落库（防止重复写）
-      const abort = new AbortController() // 客户端断开时中止上游请求
+    // 6. 流式调用 + 落库
+    const abort = new AbortController() // 客户端断开时中止上游请求
+    let partial = '' // 已收到的全文（用于回填）
+    let settled = false // 是否已回填落库（防止重复写）
 
-      /** 回填 assistant 消息并刷新会话活跃时间 */
-      const finalize = async (status: 'done' | 'failed'): Promise<void> => {
-        await this.prisma.$transaction([
-          this.prisma.aiSessionMessage.update({
-            where: { id: assistantMsg.id },
-            data: {
-              content: partial,
-              streamStatus: status,
-              promptTokens,
-              completionTokens,
-            },
-          }),
-          // 随手更新会话（幂等字段）以刷新 updatedAt，用于会话列表排序
-          this.prisma.aiSession.update({
-            where: { id: session.id },
-            data: { providerId, modelId: credentials.modelId },
-          }),
-        ])
-      }
+    /** 回填 assistant 消息并刷新会话活跃时间 */
+    const finalize = async (status: 'done' | 'failed'): Promise<void> => {
+      await this.prisma.$transaction([
+        this.prisma.aiSessionMessage.update({
+          where: { id: assistantMsg.id },
+          data: { content: partial, streamStatus: status },
+        }),
+        // 随手更新会话（幂等字段）以刷新 updatedAt，用于会话列表排序
+        this.prisma.aiSession.update({
+          where: { id: session.id },
+          data: { providerId, modelId: credentials.modelId },
+        }),
+      ])
+    }
 
-      /** 发送一帧 SSE 事件 */
-      const emit = (payload: SessionSseEventPayload): void => {
-        subscriber.next({ data: JSON.stringify(payload) })
-      }
-
-      ;(async () => {
-        try {
-          // 6.1 创建上游流：优先带 stream_options 统计 token；厂商不支持时降级重试一次
-          const buildBody = (includeUsage: boolean) => ({
-            messages: historyMessages,
-            model: credentials.modelId,
-            stream: true as const,
-            ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
-          })
-          let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          try {
-            stream = (await openai.chat.completions.create(buildBody(true), {
-              signal: abort.signal,
-            })) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          } catch (err) {
-            const msg = (err as Error)?.message ?? ''
-            if (!msg.includes('stream_options')) throw err
-            console.warn('[AiSession] 厂商不支持 stream_options，降级为无 usage 统计重试')
-            stream = (await openai.chat.completions.create(buildBody(false), {
-              signal: abort.signal,
-            })) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          }
-
-          // 6.2 逐 chunk 转发增量；最后一个 chunk 可能携带 usage 统计
-          for await (const chunk of stream) {
-            if (chunk.usage) {
-              promptTokens = chunk.usage.prompt_tokens ?? 0
-              completionTokens = chunk.usage.completion_tokens ?? 0
-            }
-            const delta = chunk.choices[0]?.delta?.content || ''
-            if (delta) {
-              partial += delta
-              emit({ content: delta })
-            }
-          }
-
-          // 6.3 正常完成：回填全文 + done 事件（附消息 ID 与 token 用量）
+    return this.aiCommon.sseFromStream(
+      () =>
+        this.aiCommon
+          .createChatModel(credentials)
+          .stream(historyMessages, { signal: abort.signal }),
+      {
+        errorLabel: '会话流式对话',
+        apiKey: credentials.apiKey,
+        onDelta: (delta) => {
+          partial += delta
+        },
+        doneExtra: { messageId: String(assistantMsg.id) },
+        beforeDone: async () => {
           if (!settled) {
             settled = true
             await finalize('done')
           }
-          emit({
-            done: true,
-            messageId: String(assistantMsg.id),
-            promptTokens,
-            completionTokens,
-          })
-          subscriber.complete()
-        } catch (error) {
-          // 6.4 失败：保留已收到的部分内容，标记 failed，再向前端发错误帧
+        },
+        onError: async () => {
           if (!settled) {
             settled = true
             await finalize('failed').catch(() => {})
           }
-          console.error('[AiSession] 会话流式对话失败（sessionId=%s）', String(session.id), error)
-          subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
-        }
-      })()
-
-      // 6.5 客户端断开（关页面/取消生成）：中止上游请求，已收内容标记为 failed
-      return () => {
-        if (!settled) {
-          settled = true
-          abort.abort()
-          finalize('failed').catch(() => {})
-        }
-      }
-    })
+        },
+        onUnsubscribe: () => {
+          if (!settled) {
+            settled = true
+            abort.abort()
+            finalize('failed').catch(() => {})
+          }
+        },
+      },
+    )
   }
 
   /**
