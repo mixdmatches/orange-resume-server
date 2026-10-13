@@ -117,19 +117,6 @@ export class AiController {
     return this.aiService.generateInterviewQuestions(user.userId, dto)
   }
 
-  /**
-   * PDF 文本 → 结构化 Resume JSON
-   * POST /api/ai/pdf-to-json
-   */
-  @ApiOperation({
-    summary: 'PDF 文本 → 结构化 Resume JSON（AI 识别）',
-  })
-  @ApiBody({ type: PdfToJsonDto })
-  @Post('pdf-to-json')
-  async pdfToJson(@CurrentUser() user: JwtPayload, @Body() dto: PdfToJsonDto) {
-    return this.aiService.pdfToJson(user.userId, dto)
-  }
-
   @Post('pdf-to-json/stream')
   async pdfToJsonStream(
     @CurrentUser() user: JwtPayload,
@@ -137,28 +124,6 @@ export class AiController {
     @Res() res: Response,
   ): Promise<void> {
     const source = await this.aiService.pdfToJsonStream(user.userId, dto)
-    this.handleSseObservable(source, res)
-  }
-
-  /**
-   * 智能助手流式对话
-   * POST /api/ai/chat/stream
-   * @returns SSE 事件流，每次 data 是字符串化的 `{ content?: string; done?: boolean }`
-   */
-  @ApiOperation({
-    summary: '（SSE 流式）AI 智能助手对话',
-  })
-  @ApiBody({
-    type: ChatStreamDto,
-    description: '对话上下文 messages 数组（按 system/user/assistant 排序）',
-  })
-  @Post('chat/stream')
-  async chatStream(
-    @CurrentUser() user: JwtPayload,
-    @Body() dto: ChatStreamDto,
-    @Res() res: Response,
-  ): Promise<void> {
-    const source = await this.aiService.chatStream(user.userId, dto)
     this.handleSseObservable(source, res)
   }
 
