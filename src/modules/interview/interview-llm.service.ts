@@ -1,8 +1,16 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import OpenAI from 'openai'
 import type { AiCredentials } from '../user/user-ai-config.service'
 import { AiCommonService } from '../shared/ai-common.service'
+import {
+  EVALUATION_JSON_FORMAT,
+  SUMMARY_JSON_FORMAT,
+  evaluateAnswerPrompt,
+  firstQuestionPrompt,
+  followupQuestionPrompt,
+  generateSummaryPrompt,
+  streamSummaryTextPrompt,
+} from './prompts/interview.prompts'
 
 /** 单题评价结果（JSON 输出契约） */
 export interface QuestionEvaluation {
@@ -111,13 +119,10 @@ export class InterviewLlmService {
    * 输出为纯文本问题（流式 token），无 JSON 结构
    */
   streamQuestion(ctx: QuestionPromptContext, credentials: AiCredentials): LlmStreamHandle {
-    const openai = this.aiCommon.createOpenAIClient(credentials)
-
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
       ? `\n\n**岗位描述**（出题时需紧扣岗位要求考察候选人匹配度）：\n${ctx.jobDescription}`
       : ''
-
     const difficultyHint =
       ctx.difficulty === 'easy'
         ? '基础概念与直接经验'
@@ -125,74 +130,47 @@ export class InterviewLlmService {
           ? '架构决策与底层原理'
           : '项目经验与实现原理'
 
-    // 历史问答文本（第 1 轮为空）
+    const isFirst = ctx.history.length === 0
     const historyText = ctx.history
       .map((h) => `【第 ${h.round} 题】${h.question}\n【候选人回答】${h.answer}`)
       .join('\n\n')
 
-    const isFirst = ctx.history.length === 0
-    const systemPrompt = `你是一位资深技术面试官${jobHint}${jdHint}，正在对候选人进行共 ${ctx.totalRounds} 轮、难度偏${ctx.difficulty}（考察${difficultyHint}）的模拟面试。
-
-${
-  isFirst
-    ? `现在请提出第 1 个面试问题：
-1. 从候选人简历中选择最值得考察的项目 / 技能点切入
-2. 问题要具体、开放，能引导候选人展开（禁止"请介绍一下你自己"这类通用题）
-3. 只提一个问题，直接输出问题文本，不要任何前缀、序号、解释或追问引导语`
-    : `前面已经进行了 ${ctx.history.length} 轮问答，记录如下。现在请提出第 ${ctx.roundIndex} 个问题：
-1. 优先对候选人上一题回答中值得深挖的点追问：表述含糊处、亮点技术方案、存疑的实现细节
-2. 如果上一回答已经充分，则结合简历切换到尚未考察的维度（换项目 / 换技能点）
-3. 追问要具体到上一回答的内容（可引用候选人原话中的关键词），不要泛泛而问
-4. 只提一个问题，直接输出问题文本，不要任何前缀、序号、解释或追问引导语`
-}`
-
-    const userContent = isFirst
-      ? `候选人简历内容：\n${ctx.resumeText}`
-      : `候选人简历内容：\n${ctx.resumeText}\n\n=== 前面轮次的问答记录 ===\n${historyText}\n\n请提出第 ${ctx.roundIndex} 个问题。`
-
-    // usage 闭包变量：流结束后由 getUsage() 返回
-    let promptTokens = 0
-    let completionTokens = 0
+    // 首轮 / 后续轮使用不同模板
+    const prompt = isFirst ? firstQuestionPrompt : followupQuestionPrompt
+    const formatVars = isFirst
+      ? {
+          jobHint,
+          jdHint,
+          totalRounds: ctx.totalRounds,
+          difficulty: ctx.difficulty,
+          difficultyHint,
+          resumeText: ctx.resumeText,
+        }
+      : {
+          jobHint,
+          jdHint,
+          totalRounds: ctx.totalRounds,
+          difficulty: ctx.difficulty,
+          difficultyHint,
+          roundIndex: ctx.roundIndex,
+          historyLength: ctx.history.length,
+          historyText,
+          resumeText: ctx.resumeText,
+        }
 
     const observable = new Observable<{ content: string }>((subscriber) => {
       ;(async () => {
         try {
-          // 优先带 stream_options 统计 token；厂商不支持时降级重试一次
-          const buildBody = (includeUsage: boolean) => ({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userContent },
-            ],
-            model: credentials.modelId,
-            stream: true as const,
-            ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
-          })
-          let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          try {
-            stream = (await openai.chat.completions.create(
-              buildBody(true) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-              { signal: ctx.signal },
-            )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          } catch {
-            console.warn('[InterviewLlm] 厂商不支持 stream_options，降级为无 usage 统计重试')
-            stream = (await openai.chat.completions.create(
-              buildBody(false) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-              { signal: ctx.signal },
-            )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          }
-
+          const messages = await prompt.formatMessages(formatVars)
+          const stream = await this.aiCommon
+            .createChatModel(credentials)
+            .stream(messages, { signal: ctx.signal })
           for await (const chunk of stream) {
-            const delta = chunk.choices[0]?.delta?.content || ''
+            const delta = typeof chunk.content === 'string' ? chunk.content : ''
             if (delta) subscriber.next({ content: delta })
-            // 最后一个 chunk 可能携带 usage
-            if (chunk.usage) {
-              promptTokens = chunk.usage.prompt_tokens ?? 0
-              completionTokens = chunk.usage.completion_tokens ?? 0
-            }
           }
           subscriber.complete()
         } catch (error) {
-          console.error('[InterviewLlm] 流式出题失败（key=%s, round=%d）', ctx.roundIndex, error)
           subscriber.error(new BadRequestException(this.aiCommon.formatError(error)))
         }
       })()
@@ -201,7 +179,7 @@ ${
 
     return {
       observable,
-      getUsage: () => ({ promptTokens, completionTokens }),
+      getUsage: () => ({ promptTokens: 0, completionTokens: 0 }),
     }
   }
 
@@ -213,52 +191,26 @@ ${
     ctx: EvaluationPromptContext,
     credentials: AiCredentials,
   ): Promise<{ evaluation: QuestionEvaluation; usage: LlmUsage }> {
-    const openai = this.aiCommon.createOpenAIClient(credentials)
-
     const jdHint = ctx.jobDescription
       ? `\n\n**岗位描述**（评价时需参考候选人回答与岗位要求的匹配度）：\n${ctx.jobDescription}`
       : ''
-    const systemPrompt = `你是一位专业的技术面试官，正在进行第 ${ctx.roundIndex}/${ctx.totalRounds} 题的评价。${jdHint}
 
-严格输出以下 JSON 格式（不要输出任何其他内容）：
-{
-  "score": 85,
-  "strengths": ["亮点1", "亮点2"],
-  "weaknesses": ["不足1", "不足2"],
-  "feedback": "综合点评（100-200 字，口语化但专业，不要用分点符号）",
-  "suggestions": ["改进建议1", "改进建议2"]
-}
-
-评分标准：
-- 90-100：回答完整且有深度，体现真实项目经验
-- 75-89：回答基本正确，有一定细节但深度不足
-- 60-74：回答有明显漏洞或偏题
-- 0-59：完全答不出或答非所问
-
-注意：
-1. feedback 要具体，引用候选人回答中的原话片段
-2. score 必须是整数`
+    const model = this.aiCommon
+      .createChatModel(credentials)
+      .withConfig({ response_format: { type: 'json_object' } })
 
     try {
-      const completion = await openai.chat.completions.create({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: `【面试问题】\n${ctx.question}\n\n【候选人回答】\n${ctx.userAnswer}`,
-          },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-        stream: false,
+      const messages = await evaluateAnswerPrompt.formatMessages({
+        jdHint,
+        roundIndex: ctx.roundIndex,
+        totalRounds: ctx.totalRounds,
+        question: ctx.question,
+        userAnswer: ctx.userAnswer,
+        jsonFormat: EVALUATION_JSON_FORMAT,
       })
-
-      const raw = completion.choices[0]?.message?.content || '{}'
+      const result = await model.invoke(messages)
+      const raw = (result.content as string) || '{}'
       const parsed = JSON.parse(raw) as Partial<QuestionEvaluation>
-      const usage: LlmUsage = {
-        promptTokens: completion.usage?.prompt_tokens ?? 0,
-        completionTokens: completion.usage?.completion_tokens ?? 0,
-      }
 
       // 全字段兜底（契约冻结，所有字段必须有值）
       return {
@@ -278,7 +230,7 @@ ${
               ? (parsed.suggestions as string[]).slice(0, 3)
               : ['建议多结合具体项目经验展开回答'],
         },
-        usage,
+        usage: { promptTokens: 0, completionTokens: 0 },
       }
     } catch (error) {
       console.error('[InterviewLlm] 评价失败（round=%d）', ctx.roundIndex, error)
@@ -304,8 +256,6 @@ ${
     ctx: SummaryPromptContext,
     credentials: AiCredentials,
   ): Promise<{ scoreDetail: InterviewScoreDetail; summaryText: string; usage: LlmUsage }> {
-    const openai = this.aiCommon.createOpenAIClient(credentials)
-
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
       ? `\n\n**岗位描述**（总结时需参考候选人整体表现与岗位要求的匹配度）：\n${ctx.jobDescription}`
@@ -319,48 +269,20 @@ ${
       )
       .join('\n\n')
 
-    const systemPrompt = `你是一位资深技术面试官${jobHint}${jdHint}，请根据候选人在本轮面试中的所有问答，独立判断并生成综合评分。
-
-评分时请你自己根据问答内容判断候选人的技术能力、项目深度、沟通表达等维度，不要依赖任何外部评价。
-
-严格输出以下 JSON 格式（不要输出任何其他内容）：
-{
-  "overallScore": 78,
-  "dimensions": [
-    { "name": "技术能力", "score": 80, "comment": "..." },
-    { "name": "项目深度", "score": 75, "comment": "..." },
-    { "name": "沟通表达", "score": 82, "comment": "..." },
-    { "name": "问题解决", "score": 70, "comment": "..." }
-  ],
-  "strengths": ["亮点1", "亮点2", "亮点3"],
-  "weaknesses": ["不足1", "不足2", "不足3"],
-  "suggestions": ["改进建议1", "改进建议2", "改进建议3"],
-  "finalVerdict": "强烈推荐 / 推荐 / 考虑 / 暂不推荐"
-}
-
-评分标准：
-- 85-100：强烈推荐，可直接进入下一轮
-- 70-84：推荐，有一定基础但需关注薄弱点
-- 55-69：考虑，基础不牢，需要加强
-- 0-54：暂不推荐，差距较大
-
-要求：
-1. dimensions 固定 4 个维度（技术能力/项目深度/沟通表达/问题解决）
-2. 每个维度 comment 要简洁（20-50 字）
-3. strengths / weaknesses / suggestions 各 3 条`
+    const model = this.aiCommon
+      .createChatModel(credentials)
+      .withConfig({ response_format: { type: 'json_object' } })
 
     try {
-      const completion = await openai.chat.completions.create({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `面试难度：${ctx.difficulty}\n\n${allQaText}` },
-        ],
-        model: credentials.modelId,
-        response_format: { type: 'json_object' },
-        stream: false,
+      const messages = await generateSummaryPrompt.formatMessages({
+        jobHint,
+        jdHint,
+        difficulty: ctx.difficulty,
+        allQaText,
+        jsonFormat: SUMMARY_JSON_FORMAT,
       })
-
-      const raw = completion.choices[0]?.message?.content || '{}'
+      const result = await model.invoke(messages)
+      const raw = (result.content as string) || '{}'
       const parsed = JSON.parse(raw) as Partial<InterviewScoreDetail>
 
       // 全字段兜底（契约冻结）
@@ -402,25 +324,17 @@ ${
       // 自然语言总结文本（流式总结失败时的兜底内容）
       const summaryText = this.buildSummaryText(scoreDetail)
 
-      const usage: LlmUsage = {
-        promptTokens: completion.usage?.prompt_tokens ?? 0,
-        completionTokens: completion.usage?.completion_tokens ?? 0,
-      }
-
-      return { scoreDetail, summaryText, usage }
+      return { scoreDetail, summaryText, usage: { promptTokens: 0, completionTokens: 0 } }
     } catch (error) {
-      console.error('[InterviewLlm] 总结生成失败（key=%s）')
       throw new BadRequestException(this.aiCommon.formatError(error))
     }
   }
 
   /**
    * 生成面试总结文本的流式 Observable（非 JSON 模式，直接流式自然语言）
-   * 返回 LlmStreamHandle：订阅 observable 拿 content 增量，流结束后 getUsage() 拿 token
+   * 返回 LlmStreamHandle：订阅 observable 拿 content 增量
    */
   streamSummaryText(ctx: SummaryPromptContext, credentials: AiCredentials): LlmStreamHandle {
-    const openai = this.aiCommon.createOpenAIClient(credentials)
-
     const jobHint = ctx.jobTitle ? `，面向岗位「${ctx.jobTitle}」` : ''
     const jdHint = ctx.jobDescription
       ? `\n\n**岗位描述**（总结时需参考候选人整体表现与岗位要求的匹配度）：\n${ctx.jobDescription}`
@@ -434,52 +348,20 @@ ${
       )
       .join('\n\n')
 
-    const systemPrompt = `你是一位资深技术面试官${jobHint}${jdHint}，正在根据候选人的所有问答生成面试总结报告。
-请用 Markdown 格式输出一份 200-400 字的总结，结构：
-1. **整体印象**（1-2 句）
-2. **优势亮点**（3 条以内，用 - 列表）
-3. **待改进点**（3 条以内，用 - 列表）
-4. **最终结论**（推荐程度 + 简要理由）
-
-请你独立判断候选人表现，不要依赖任何外部评价。用第一人称，语气专业但友好。直接开始输出，不要写标题。`
-
-    let promptTokens = 0
-    let completionTokens = 0
-
     const observable = new Observable<{ content: string }>((subscriber) => {
       ;(async () => {
         try {
-          // 优先带 stream_options 统计 token；厂商不支持时降级重试一次
-          const buildBody = (includeUsage: boolean) => ({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: allQaText },
-            ],
-            model: credentials.modelId,
-            stream: true as const,
-            ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+          const messages = await streamSummaryTextPrompt.formatMessages({
+            jobHint,
+            jdHint,
+            allQaText,
           })
-          let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          try {
-            stream = (await openai.chat.completions.create(
-              buildBody(true) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-              { signal: ctx.signal },
-            )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          } catch {
-            console.warn('[InterviewLlm] 厂商不支持 stream_options，降级为无 usage 统计重试')
-            stream = (await openai.chat.completions.create(
-              buildBody(false) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-              { signal: ctx.signal },
-            )) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-          }
-
+          const stream = await this.aiCommon
+            .createChatModel(credentials)
+            .stream(messages, { signal: ctx.signal })
           for await (const chunk of stream) {
-            const delta = chunk.choices[0]?.delta?.content || ''
+            const delta = typeof chunk.content === 'string' ? chunk.content : ''
             if (delta) subscriber.next({ content: delta })
-            if (chunk.usage) {
-              promptTokens = chunk.usage.prompt_tokens ?? 0
-              completionTokens = chunk.usage.completion_tokens ?? 0
-            }
           }
           subscriber.complete()
         } catch (error) {
@@ -492,7 +374,7 @@ ${
 
     return {
       observable,
-      getUsage: () => ({ promptTokens, completionTokens }),
+      getUsage: () => ({ promptTokens: 0, completionTokens: 0 }),
     }
   }
 

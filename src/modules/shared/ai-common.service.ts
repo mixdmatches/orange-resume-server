@@ -6,7 +6,7 @@ import OpenAI from 'openai'
 import type { AiCredentials } from '../user/user-ai-config.service'
 
 /** SSE 流式转换钩子：供调用方做增量累积、落库回填、断开清理 */
-export interface SseStreamHooks {
+interface SseStreamHooks {
   /** 错误日志标签 */
   errorLabel: string
   /** 用于日志掩码的明文 key */

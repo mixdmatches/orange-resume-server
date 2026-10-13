@@ -3,30 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service'
 import { generateShortId } from '@/common/utils/short-id.util'
 import { toTimestamp } from '@/common/utils/date.util'
 import type { UpdateResumeDto, CreateResumeDto } from './dto/resume.dto'
-
-/**
- * 简历列表单条摘要结构（不含 content，省流量）
- */
-export interface ResumeSummary {
-  /** 简历短 ID */
-  id: string
-  /** 简历标题 */
-  title: string
-  /** 模板 ID */
-  templateId: string
-  /** 创建时间（毫秒时间戳，与前端 Resume 类型一致） */
-  createdAt: number
-  /** 更新时间（毫秒时间戳） */
-  updatedAt: number | null
-}
-
-/**
- * 简历列表响应结构
- */
-export interface ResumeListResult {
-  list: ResumeSummary[]
-  total: number
-}
+import { ResumeListResult } from '@/common/types/resume'
 
 @Injectable()
 export class ResumeService {

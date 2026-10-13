@@ -1,14 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import type {
-  AiSession,
-  AiSessionMessage,
-  Difficulty,
-  InterviewSession,
-  Prisma,
-  SessionStatus,
-  SessionType,
-} from '@prisma/client'
+import type { AiSession, AiSessionMessage, InterviewSession, Prisma } from '@prisma/client'
 import { AiCommonService } from '../shared/ai-common.service'
 import { CredentialService } from '../shared/credential.service'
 import { SessionGuardService } from '../shared/session-guard.service'
@@ -23,57 +15,7 @@ import type { UpdateSessionDto } from './dto/update-session.dto'
 import type { ListSessionsDto } from './dto/list-sessions.dto'
 import type { ListMessagesDto } from './dto/list-messages.dto'
 import type { SendMessageDto } from './dto/send-message.dto'
-
-/**
- * 会话接口响应结构（serializeSession 的返回值类型）
- * 所有 BigInt 字段已转为 string，可安全 JSON 序列化
- */
-export interface SerializedSession {
-  /** 会话 ID（BigInt 序列化为字符串） */
-  id: string
-  /** 简历id */
-  resumeId: string
-  /** 所属用户 ID */
-  userId: number
-  /** 会话类型：interview = AI 面试 / chat = AI 对话 */
-  type: SessionType
-  /** 会话标题 */
-  title: string
-  /** 当时使用的厂商标识（软引用 ai_provider.provider_id，厂商删除后历史会话仍可查） */
-  providerId: string | null
-  /** 当时使用的模型 ID */
-  modelId: string | null
-  /** 会话状态（active 正常 / archived 归档 / deleted 软删除） */
-  status: SessionStatus
-  /** 会话消息数（列表接口经 _count 统计携带；详情接口不含此字段） */
-  messageCount?: number
-  /** 面试扩展信息（仅 interview 类型会话存在，chat 会话为 null） */
-  interviewSession: SerializedInterviewSession | null
-  /** 创建时间 */
-  createdAt: Date
-  /** 更新时间（用于会话列表按活跃度排序） */
-  updatedAt: Date
-}
-
-/**
- * 面试扩展信息的序列化结构（SerializedSession.interviewSession 的元素类型）
- */
-export interface SerializedInterviewSession {
-  /** 关联的简历 ID（面试以简历为出题种子） */
-  resumeId: string
-  /** 目标岗位（如"前端工程师"） */
-  jobTitle: string | null
-  /** 面试难度档位 */
-  difficulty: Difficulty
-  /** 题目类型（技术 / 行为 / 项目深挖等，null 表示混合出题） */
-  category: string | null
-  /** 面试总分（Prisma Decimal 转 number，面试结束评分前为 null） */
-  totalScore: number | null
-  /** AI 生成的面试总结报告（面试结束后回填） */
-  summary: string | null
-  /** 面试总耗时（秒） */
-  durationSec: number | null
-}
+import { SerializedSession } from '@/common/types/session'
 
 /**
  * AI 会话服务
