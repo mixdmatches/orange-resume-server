@@ -49,7 +49,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('无效的令牌类型')
     }
 
-    await this.userService.findById(payload.userId).catch(() => new UnauthorizedException('用户不存在或已被删除'))
+    await this.userService
+      .findById(payload.userId)
+      .catch(() => new UnauthorizedException('用户不存在或已被删除'))
 
     return {
       userId: payload.userId,

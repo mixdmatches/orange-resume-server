@@ -1,7 +1,6 @@
 import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator'
 import { ApiProperty } from '@nestjs/swagger'
 
-
 export class CreateResumeDto {
   @ApiProperty({
     description:

@@ -293,7 +293,7 @@ export class AiSessionService {
           if (!settled) {
             settled = true
             abort.abort()
-            finalize('failed').catch(() => {})
+            finalize('failed', '客户端断开连接').catch(() => {})
           }
         },
       },

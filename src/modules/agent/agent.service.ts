@@ -189,7 +189,7 @@ export class AgentRunnerService {
         if (!settled) {
           settled = true
           abort.abort()
-          this.finalize(ctx, fullContent, 'failed')
+          this.finalize(ctx, fullContent, 'failed', '客户端断开连接')
         }
       }
     })
