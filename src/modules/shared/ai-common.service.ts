@@ -2,7 +2,6 @@ import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
 import { ChatOpenAI } from '@langchain/openai'
 import type { AIMessageChunk } from '@langchain/core/messages'
-import OpenAI from 'openai'
 import type { AiCredentials } from '../user/user-ai-config.service'
 
 /** SSE 流式转换钩子：供调用方做增量累积、落库回填、断开清理 */
@@ -28,14 +27,6 @@ interface SseStreamHooks {
  */
 @Injectable()
 export class AiCommonService {
-  /**
-   * @param credentials 解密后的用户凭证 { apiKey, baseUrl, modelId }
-   * @returns OpenAI 客户端实例
-   */
-  createOpenAIClient(credentials: AiCredentials): OpenAI {
-    return new OpenAI({ apiKey: credentials.apiKey, baseURL: credentials.baseUrl })
-  }
-
   /**
    * 创建 LangChain ChatOpenAI 模型
    */
@@ -74,7 +65,6 @@ export class AiCommonService {
           subscriber.next({ data: JSON.stringify({ done: true, ...doneExtra }) })
           subscriber.complete()
         } catch (error) {
-          console.error('[AI] %s失败（key=%s）', errorLabel, this.maskKey(apiKey))
           try {
             await onError?.(error)
           } catch {
@@ -97,16 +87,5 @@ export class AiCommonService {
     const err = error as { message?: string }
     if (err?.message) return err.message
     return '生成失败，请重试'
-  }
-
-  /**
-   * 对 API Key 做掩码处理（仅保留前 8 位），用于错误日志打印
-   * 避免完整 Key 泄漏到日志或控制台
-   * @param key 明文 API Key
-   * @returns 掩码后的字符串，如 'sk-abcdef***'
-   */
-  maskKey(key: string): string {
-    if (!key || key.length <= 8) return '***'
-    return `${key.slice(0, 8)}***`
   }
 }

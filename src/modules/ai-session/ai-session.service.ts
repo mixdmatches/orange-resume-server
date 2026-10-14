@@ -247,11 +247,15 @@ export class AiSessionService {
     let settled = false // 是否已回填落库（防止重复写）
 
     /** 回填 assistant 消息并刷新会话活跃时间 */
-    const finalize = async (status: 'done' | 'failed'): Promise<void> => {
+    const finalize = async (status: 'done' | 'failed', errorMessage?: string): Promise<void> => {
       await this.prisma.$transaction([
         this.prisma.aiSessionMessage.update({
           where: { id: assistantMsg.id },
-          data: { content: partial, streamStatus: status },
+          data: {
+            content: partial,
+            streamStatus: status,
+            errorMessage: status === 'failed' ? errorMessage : null,
+          },
         }),
         // 随手更新会话（幂等字段）以刷新 updatedAt，用于会话列表排序
         this.prisma.aiSession.update({
@@ -279,10 +283,10 @@ export class AiSessionService {
             await finalize('done')
           }
         },
-        onError: async () => {
+        onError: async (error: unknown) => {
           if (!settled) {
             settled = true
-            await finalize('failed').catch(() => {})
+            await finalize('failed', this.aiCommon.formatError(error)).catch(() => {})
           }
         },
         onUnsubscribe: () => {
@@ -350,6 +354,7 @@ export class AiSessionService {
       extra: message.extra,
       toolCalls: message.toolCalls,
       streamStatus: message.streamStatus,
+      errorMessage: message.errorMessage,
       createdAt: message.createdAt,
     }
   }

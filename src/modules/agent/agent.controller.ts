@@ -1,7 +1,7 @@
 import { Body, Controller, HttpException, Param, Post, Res, UseGuards } from '@nestjs/common'
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Response } from 'express'
-import { AgentRunnerService } from './agent-runner.service'
+import { AgentRunnerService } from './agent.service'
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard'
 import { CurrentUser } from '../../common/decorators/current-user.decorator'
 import type { JwtPayload } from '../../common/types/jwt-payload'

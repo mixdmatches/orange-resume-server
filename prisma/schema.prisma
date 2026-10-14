@@ -253,6 +253,8 @@ model AiSessionMessage {
   toolCalls        Json?        @map("tool_calls")
   /// 流式写入状态：streaming / done / failed（流式响应落库的中间态标记）
   streamStatus     StreamStatus @default(done) @map("stream_status")
+  /// 错误详情（仅 streamStatus=failed 时记录具体错误原因，其他状态为 null）
+  errorMessage     String?      @db.Text @map("error_message")
   /// 创建时间（消息不可变，只写不改，无更新时间）
   createdAt        DateTime     @default(now()) @map("created_at")
 
