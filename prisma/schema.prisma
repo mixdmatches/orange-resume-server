@@ -65,8 +65,6 @@ model Resume {
 
   /// 与 User 表的关联关系：N : 1，级联删除
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// 一对多关联：使用该简历的 AI 面试会话
-  interviewSessions InterviewSession[]
   /// 一对多关联：引用该简历的 AI 会话（面试场景写入，简历删除时级联删除）
   aiSessions        AiSession[]
 
@@ -293,35 +291,33 @@ enum InterviewStatus {
 
 /**
  * 面试会话扩展表
- * 与 AiSession 一对一（主键即外键），仅 type = interview 的会话有记录；
- * 面试业务演进频繁（评分规则、面试官风格等），变化隔离在本表，不动会话基表
  */
 model InterviewSession {
   /// 会话 ID（主键即外键，一对一）
   sessionId   BigInt          @id @map("session_id")
-  /// 关联的简历 ID（外键，面试以简历为出题种子）
-  resumeId    String          @map("resume_id") @db.VarChar(10)
-  /// 目标岗位（如"前端工程师"），影响出题方向
+  /// 简历纯文本快照
+  resumeText  String          @db.Text @map("resume_text")
+  /// 目标岗位
   jobTitle    String?         @map("job_title") @db.VarChar(128)
   /// 面试难度档位
   difficulty  Difficulty      @default(medium)
-  /// 题目类型（技术 / 行为 / 项目深挖等，可空表示混合出题）
+  /// 题目类型
   category    String?         @db.VarChar(64)
-  /// 面试总轮数（前端指定，默认 5；动态出题模式按此轮数逐轮生成）
+  /// 面试总轮数
   questionCount Int           @default(5) @map("question_count")
-  /// 面试岗位描述（可选）
+  /// 面试岗位描述
   jobDescription String?         @map("job_description") @db.VarChar(256)
   /// 面试状态：pending_questions → in_progress → finished
   status      InterviewStatus @default(pending_questions)
-  /// 面试开始时间（start 时写入，用于计算 duration_sec）
+  /// 面试开始时间
   startedAt   DateTime?       @map("started_at")
-  /// 面试总分（AI 汇总评分，面试结束后回填）
+  /// 面试总分
   totalScore  Decimal?        @map("total_score") @db.Decimal(5, 2)
-  /// AI 生成的面试总结报告（面试结束后回填）
+  /// AI 生成的面试总结报告
   summary     String?         @db.Text
-  /// 结构化评分详情（JSON，契约冻结见 interview-llm.service）
+  /// 结构化评分详情
   scoreDetail Json?           @map("score_detail")
-  /// 面试总耗时（秒）
+  /// 面试总耗时
   durationSec Int?            @map("duration_sec")
   /// 创建时间
   createdAt   DateTime        @default(now()) @map("created_at")
@@ -330,11 +326,7 @@ model InterviewSession {
 
   /// 与 AiSession 表的关联关系：1 : 1，级联删除
   session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  /// 与 Resume 表的关联关系：N : 1，级联删除（简历删除则面试记录随之删除）
-  resume  Resume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
 
-  /// 索引：按简历查关联的面试记录
-  @@index([resumeId], map: "idx_resume")
   /// 数据库表名映射为设计文档中的 snake_case 命名
   @@map("interview_session")
 }

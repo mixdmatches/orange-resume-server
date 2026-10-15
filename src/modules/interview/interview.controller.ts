@@ -9,9 +9,6 @@ import type { JwtPayload } from '../../common/types/jwt-payload'
 import { CreateInterviewDto } from './dto/create-interview.dto'
 import { InterviewStreamDto } from './dto/interview-stream.dto'
 
-/**
- * AI 面试控制器
- */
 @ApiTags('🎯 AI 面试 AI-Interview')
 @ApiBearerAuth('bearer')
 @Controller('interviews')

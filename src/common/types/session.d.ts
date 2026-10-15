@@ -22,7 +22,7 @@ export interface SerializedSession {
  * 面试扩展信息的序列化结构
  */
 export interface SerializedInterviewSession {
-  resumeId: string
+  resumeText: string
   jobTitle: string | null
   difficulty: Difficulty
   /** 题目类型（技术 / 行为 / 项目深挖等，null 表示混合出题） */

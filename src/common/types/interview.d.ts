@@ -28,7 +28,7 @@ type SsePush = (payload: InterviewSseEvent) => void
 export interface InterviewDetail {
   id: string
   userId: number
-  resumeId: string
+  resumeText: string
   jobTitle: string | null
   difficulty: string
   category: string | null

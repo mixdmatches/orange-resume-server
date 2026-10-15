@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import { Observable } from 'rxjs'
-import type { AiSession, InterviewSession, InterviewStatus, Prisma } from '@prisma/client'
+import type { AiSession, InterviewSession, Prisma } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
 import type { AiCredentials } from '../user/user-ai-config.service'
 import { CredentialService } from '../shared/credential.service'
@@ -10,12 +10,6 @@ import type { CreateInterviewDto } from './dto/create-interview.dto'
 import type { InterviewStreamDto } from './dto/interview-stream.dto'
 import { SsePush, InterviewSseEvent, InterviewDetail } from '@/common/types/interview'
 
-/**
- * 面试编排服务
- *
- * 状态机：pending_questions ──start──→ in_progress ──all answered/finish──→ finished
- * 附加：客户端中途中止（停止生成/断开）→ stopped；继续答题或重新出题后恢复 in_progress
- */
 @Injectable()
 export class InterviewService {
   constructor(
@@ -48,7 +42,7 @@ export class InterviewService {
       modelId: session.modelId,
       status: session.status,
       interviewStatus: session.interviewSession.status,
-      resumeId: session.interviewSession.resumeId,
+      resumeText: session.interviewSession.resumeText,
       jobTitle: session.interviewSession.jobTitle,
       difficulty: session.interviewSession.difficulty,
       category: session.interviewSession.category,
@@ -67,17 +61,11 @@ export class InterviewService {
   }
 
   /**
-   * 创建面试会话（双写 ai_session + interview_session，状态 pending_questions）
+   * 创建面试会话
    */
   async createInterview(userId: number, dto: CreateInterviewDto): Promise<Record<string, unknown>> {
-    // 校验简历归属
-    const resume = await this.prisma.resume.findUnique({ where: { id: dto.resumeId } })
-    if (!resume || resume.userId !== userId) {
-      throw new NotFoundException('简历不存在或无权访问')
-    }
-
-    // 面试标题（由岗位自动生成）
-    const title = dto.jobTitle ? `${dto.jobTitle} 面试` : `面试 - ${resume.title || '我的简历'}`
+    // 面试标题
+    const title = dto.jobTitle ? `${dto.jobTitle} 面试` : '面试 - 我的简历'
 
     const session = await this.prisma.$transaction(async (tx) => {
       const aiSession = await tx.aiSession.create({
@@ -87,13 +75,12 @@ export class InterviewService {
           title,
           providerId: dto.providerId,
           modelId: dto.modelId,
-          resumeId: dto.resumeId,
         },
       })
       const interviewSession = await tx.interviewSession.create({
         data: {
           sessionId: aiSession.id,
-          resumeId: dto.resumeId,
+          resumeText: dto.resumeText,
           jobTitle: dto.jobTitle,
           jobDescription: dto.jobDescription,
           difficulty: dto.difficulty ?? 'medium',
@@ -269,10 +256,8 @@ export class InterviewService {
     // 0. 推开始事件（前端显示"面试官正在提问…"）
     push({ event: 'question_start', round, totalRounds })
 
-    // 1. 读简历内容（拼接所有 section 为纯文本）
-    const resume = await this.prisma.resume.findUnique({ where: { id: iSession.resumeId } })
-    if (!resume) throw new NotFoundException('简历不存在')
-    const resumeText = this.stringifyResumeContent(resume.content as Prisma.InputJsonValue)
+    // 1. 简历纯文本
+    const resumeText = iSession.resumeText
 
     // 2. 收集历史问答（追问的上下文来源）
     const history = await this.collectHistory(interview.id)
@@ -608,7 +593,7 @@ export class InterviewService {
     const details: InterviewDetail = {
       id: String(interview.id),
       userId: interview.userId,
-      resumeId: iSession.resumeId,
+      resumeText: iSession.resumeText,
       jobTitle: iSession.jobTitle,
       difficulty: iSession.difficulty,
       category: iSession.category,
@@ -672,57 +657,5 @@ export class InterviewService {
       data: { status: 'deleted' },
     })
     return { success: true }
-  }
-
-  /**
-   * 把 Resume JSON 内容（前端 Resume 接口结构）拼接成纯文本
-   */
-  private stringifyResumeContent(content: Prisma.InputJsonValue): string {
-    if (!content || typeof content !== 'object') return ''
-    const c = content as Record<string, unknown>
-
-    const parts: string[] = []
-    const basic = (c.basic ?? {}) as Record<string, unknown>
-    if (basic.name) parts.push(`姓名：${basic.name}`)
-    if (basic.position) parts.push(`岗位：${basic.position}`)
-    if (basic.phone) parts.push(`电话：${basic.phone}`)
-    if (basic.email) parts.push(`邮箱：${basic.email}`)
-
-    const sections: Array<{ key: string; label: string; format: (item: unknown) => string }> = [
-      {
-        key: 'educations',
-        label: '教育经历',
-        format: (e) =>
-          `${(e as any).school} - ${(e as any).major} ${(e as any).degree ?? ''} ${(e as any).dateRange ?? ''}\n${(e as any).description ?? ''}`,
-      },
-      {
-        key: 'internships',
-        label: '实习经历',
-        format: (e) =>
-          `${(e as any).companyName} - ${(e as any).position} ${(e as any).dateRange ?? ''}\n${(e as any).description ?? ''}`,
-      },
-      {
-        key: 'projects',
-        label: '项目经历',
-        format: (e) =>
-          `${(e as any).name} - ${(e as any).role ?? ''} ${(e as any).dateRange ?? ''}\n${(e as any).description ?? ''}`,
-      },
-    ]
-
-    for (const { key, label, format } of sections) {
-      const arr = c[key] as unknown[] | undefined
-      if (Array.isArray(arr) && arr.length > 0) {
-        parts.push(`\n## ${label}`)
-        for (const item of arr) {
-          if ((item as any).visible === false) continue
-          parts.push(format(item))
-        }
-      }
-    }
-
-    if (c.skills) parts.push(`\n## 技能\n${c.skills}`)
-    if (c.summary) parts.push(`\n## 自我评价\n${c.summary}`)
-
-    return parts.join('\n').trim()
   }
 }

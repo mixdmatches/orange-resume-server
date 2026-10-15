@@ -322,7 +322,7 @@ export class AiSessionService {
       messageCount: session._count?.messages,
       interviewSession: session.interviewSession
         ? {
-            resumeId: session.interviewSession.resumeId,
+            resumeText: session.interviewSession.resumeText,
             jobTitle: session.interviewSession.jobTitle,
             difficulty: session.interviewSession.difficulty,
             category: session.interviewSession.category,
